@@ -2,7 +2,7 @@
 # xv6-LLM Scheduler Project
 # ==========================================
 
-# Core xv6 build artifacts
+# xv6 Core Build Artifacts
 *~
 _*
 *.o
@@ -24,8 +24,7 @@ user/usys.S
 .gdbinit
 TAGS
 
-# xv6 build outputs
-xv6/_*
+# xv6 Build Outputs
 xv6/*.o
 xv6/*.d
 xv6/*.asm
@@ -33,24 +32,34 @@ xv6/*.sym
 xv6/*.img
 xv6/*.bin
 xv6/*.out
-xv6/kernel
+xv6/kernel/kernel
 xv6/bootblock
 xv6/initcode
-xv6/.gdbinit
+xv6/initcode.out
 
-# Logs and runtime files
+# xv6 Logs and Runtime Files
 xv6/*.log
 xv6/sched_log.txt
 xv6/llm_advice.txt
 
-# Python-related ignores
+# Keep xv6 Source Files Tracked
+!xv6/
+!xv6/Makefile
+!xv6/README
+!xv6/**/*.c
+!xv6/**/*.h
+!xv6/**/*.S
+!xv6/**/*.pl
+!xv6/**/*.py
+
+# Python Related
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 *.log
 
-# Virtual environments
+# Virtual Environments
 .venv/
 venv/
 env/
@@ -58,21 +67,20 @@ ENV/
 agent/.venv/
 agent/venv/
 
-# Python agent data
+# Agent Data and Logs
 agent/__pycache__/
 agent/*.pyc
 agent/*.log
 
-# IDE and editor files
+# IDE and Editor Files
 .vscode/
+.idea/
 .history/
 .code-workspace
-.idea/
 *.swp
 *.swo
-*~
 
-# System files
+# System Files
 .DS_Store
 Thumbs.db
 
@@ -80,3 +88,4 @@ Thumbs.db
 *.tmp
 *.bak
 *.old
+*.zip
