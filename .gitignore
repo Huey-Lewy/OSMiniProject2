@@ -1,0 +1,82 @@
+# ==========================================
+# xv6-LLM Scheduler Project
+# ==========================================
+
+# Core xv6 build artifacts
+*~
+_*
+*.o
+*.d
+*.asm
+*.sym
+*.img
+*.bin
+*.out
+vectors.S
+bootblock
+entryother
+initcode
+initcode.out
+kernelmemfs
+mkfs
+kernel/kernel
+user/usys.S
+.gdbinit
+TAGS
+
+# xv6 build outputs
+xv6/_*
+xv6/*.o
+xv6/*.d
+xv6/*.asm
+xv6/*.sym
+xv6/*.img
+xv6/*.bin
+xv6/*.out
+xv6/kernel
+xv6/bootblock
+xv6/initcode
+xv6/.gdbinit
+
+# Logs and runtime files
+xv6/*.log
+xv6/sched_log.txt
+xv6/llm_advice.txt
+
+# Python-related ignores
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+agent/.venv/
+agent/venv/
+
+# Python agent data
+agent/__pycache__/
+agent/*.pyc
+agent/*.log
+
+# IDE and editor files
+.vscode/
+.history/
+.code-workspace
+.idea/
+*.swp
+*.swo
+*~
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Miscellaneous
+*.tmp
+*.bak
+*.old
