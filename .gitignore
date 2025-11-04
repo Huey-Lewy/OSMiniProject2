@@ -2,89 +2,101 @@
 # xv6-LLM Scheduler Project
 # ==========================================
 
-# xv6 Core Build Artifacts
-*~
-_*
-*.o
-*.d
-*.asm
-*.sym
-*.img
-*.bin
-*.out
-vectors.S
-bootblock
-entryother
-initcode
-initcode.out
-kernelmemfs
-mkfs
-kernel/kernel
-user/usys.S
-.gdbinit
-TAGS
-
-# xv6 Build Outputs
-xv6/*.o
-xv6/*.d
-xv6/*.asm
-xv6/*.sym
-xv6/*.img
-xv6/*.bin
-xv6/*.out
-xv6/kernel/kernel
+#### xv6 Build Artifacts ####
+xv6/**/*.o
+xv6/**/*.d
+xv6/**/*.asm
+xv6/**/*.sym
+xv6/**/*.img
+xv6/**/*.bin
+xv6/**/*.out
 xv6/bootblock
 xv6/initcode
 xv6/initcode.out
+xv6/kernel/kernel
+xv6/mkfs/mkfs
+xv6/fs.img
+xv6/.gdbinit
+xv6/user/usys.S
 
-# xv6 Logs and Runtime Files
+# User program binaries (generated)
+xv6/user/_cat
+xv6/user/_echo
+xv6/user/_forktest
+xv6/user/_grep
+xv6/user/_init
+xv6/user/_kill
+xv6/user/_ln
+xv6/user/_ls
+xv6/user/_mkdir
+xv6/user/_rm
+xv6/user/_sh
+xv6/user/_stressfs
+xv6/user/_usertests
+xv6/user/_grind
+xv6/user/_wc
+xv6/user/_zombie
+xv6/user/_logstress
+xv6/user/_forphan
+xv6/user/_dorphan
+
+# Documentation build products
+xv6/*.tex
+xv6/*.dvi
+xv6/*.idx
+xv6/*.aux
 xv6/*.log
-xv6/sched_log.txt
-xv6/llm_advice.txt
+xv6/*.ind
+xv6/*.ilg
 
-# Keep xv6 Source Files Tracked
+xv6/TAGS
+
+# Keep all xv6 source tracked
 !xv6/
-!xv6/Makefile
-!xv6/README
 !xv6/**/*.c
 !xv6/**/*.h
 !xv6/**/*.S
 !xv6/**/*.pl
-!xv6/**/*.py
+!xv6/Makefile
+!xv6/README
 
-# Python Related
+#### Shared Data ####
+# Ignore content changes but keep placeholder files
+shared/*.txt
+!shared/sched_log.txt
+!shared/llm_advice.txt
+shared/*.log
+
+#### Agent Python Environment ####
+agent/__pycache__/
+agent/*.pyc
+agent/*.pyo
+agent/*.log
+agent/.env
+agent/.venv/
+agent/venv/
+agent/env/
+agent/*.tmp
+agent/*.bak
+
+#### Python Dependency Files ####
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 *.log
 
-# Virtual Environments
-.venv/
-venv/
-env/
-ENV/
-agent/.venv/
-agent/venv/
-
-# Agent Data and Logs
-agent/__pycache__/
-agent/*.pyc
-agent/*.log
-
-# IDE and Editor Files
+#### IDE and Editor Files ####
 .vscode/
 .idea/
-.history/
-.code-workspace
 *.swp
 *.swo
+*.code-workspace
+.history/
 
-# System Files
+#### System / Miscellaneous ####
 .DS_Store
 Thumbs.db
-
-# Miscellaneous
 *.tmp
 *.bak
 *.old
