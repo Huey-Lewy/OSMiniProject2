@@ -1,3 +1,4 @@
+# user/usys.pl
 #!/usr/bin/perl -w
 
 # Generate usys.S, the stubs for syscalls.
@@ -10,11 +11,11 @@ sub entry {
     my $prefix = "sys_";
     my $name = shift;
     if ($name eq "sbrk") {
-	print ".global $prefix$name\n";
-	print "$prefix$name:\n";
+        print ".global $prefix$name\n";
+        print "$prefix$name:\n";
     } else {
-	print ".global $name\n";
-	print "$name:\n";
+        print ".global $name\n";
+        print "$name:\n";
     }
     print " li a7, SYS_${name}\n";
     print " ecall\n";
@@ -42,3 +43,4 @@ entry("getpid");
 entry("sbrk");
 entry("pause");
 entry("uptime");
+entry("set_llm_advice");

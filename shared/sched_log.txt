@@ -1,0 +1,20 @@
+
+xv6 kernel is booting
+
+init: starting sh
+DVICE:PID=5
+llmhelper
+[llmhelper] Ready. Waiting for advice on stdin...
+$ SCHED_LOG_START
+TIMESTAMP:38
+PROC:1,2,23,23,0,23
+PROC:2,2,5,4,0,5
+PROC:3,2,10,12,0,10
+SCHED_LOG_END
+SCHED_LOG_START
+TIMESTAMP:138
+PROC:1,2,23,23,0,23
+PROC:2,2,5,4,0,5
+PROC:3,2,10,12,0,10
+SCHED_LOG_END
+qemu-system-riscv64: terminating on signal 2

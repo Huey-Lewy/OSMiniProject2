@@ -1,3 +1,4 @@
+// user/init.c
 // init: The initial user-level program
 
 #include "kernel/types.h"
@@ -22,6 +23,14 @@ main(void)
   }
   dup(0);  // stdout
   dup(0);  // stderr
+
+  // start llmhelper in background (reads advice from stdin)
+  if (fork() == 0) {
+    char *hargv[] = { "llmhelper", 0 };
+    exec("llmhelper", hargv);
+    printf("init: exec llmhelper failed\n");
+    exit(1);
+  }
 
   for(;;){
     printf("init: starting sh\n");
