@@ -1,5 +1,5 @@
-#include "types.h"
-#include "stat.h"
+#include "kernel/types.h"
+#include "kernel/stat.h"
 #include "user.h"
 
 int main(void) {
@@ -7,6 +7,6 @@ int main(void) {
   for (i = 0; i < 1000000000; i++) {
     x += i;
   }
-  printf(1, "CPU-bound finished\n");
+  printf("CPU-bound finished\n");
   exit(0);
 }

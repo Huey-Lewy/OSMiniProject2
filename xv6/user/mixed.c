@@ -1,5 +1,5 @@
-#include "types.h"
-#include "stat.h"
+#include "kernel/types.h"
+#include "kernel/stat.h"
 #include "user.h"
 
 int main(void) {
@@ -10,9 +10,9 @@ int main(void) {
       x += j;
     }
     // I/O operation
-    printf(1, "Mixed %d\n", i);
+    printf("Mixed %d\n", i);
     sleep(2);
   }
-  printf(1, "Mixed finished\n");
+  printf("Mixed finished\n");
   exit(0);
 }

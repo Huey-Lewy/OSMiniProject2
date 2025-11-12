@@ -1,7 +1,7 @@
-#include "types.h"
-#include "stat.h"
-#include "user.h"
-#include "fcntl.h"
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
+#include "kernel/fcntl.h"
 
 char *argv[] = { "sh", 0 };  // For shell
 
@@ -20,66 +20,66 @@ main(void)
   // Start llmhelper in background (as per spec)
   pid = fork();
   if(pid < 0){
-    printf(1, "init: fork failed\n");
+    printf("init: fork failed\n");
     exit(1);
   }
   if(pid == 0){
     exec("llmhelper", argv);  // argv can be reused since llmhelper takes no args
-    printf(1, "init: exec llmhelper failed\n");
+    printf("init: exec llmhelper failed\n");
     exit(1);
   }
 
   // Automatically start cpubound in background
   pid = fork();
   if(pid < 0){
-    printf(1, "init: fork failed\n");
+    printf("init: fork failed\n");
     exit(1);
   }
   if(pid == 0){
     exec("cpubound", argv);
-    printf(1, "init: exec cpubound failed\n");
+    printf("init: exec cpubound failed\n");
     exit(1);
   }
 
   // Automatically start iobound in background
   pid = fork();
   if(pid < 0){
-    printf(1, "init: fork failed\n");
+    printf("init: fork failed\n");
     exit(1);
   }
   if(pid == 0){
     exec("iobound", argv);
-    printf(1, "init: exec iobound failed\n");
+    printf("init: exec iobound failed\n");
     exit(1);
   }
 
   // Automatically start mixed in background
   pid = fork();
   if(pid < 0){
-    printf(1, "init: fork failed\n");
+    printf("init: fork failed\n");
     exit(1);
   }
   if(pid == 0){
     exec("mixed", argv);
-    printf(1, "init: exec mixed failed\n");
+    printf("init: exec mixed failed\n");
     exit(1);
   }
 
   for(;;){
-    printf(1, "init: starting sh\n");
+    printf("init: starting sh\n");
     pid = fork();
     if(pid < 0){
-      printf(1, "init: fork failed\n");
+      printf("init: fork failed\n");
       exit(1);
     }
     if(pid == 0){
       exec("sh", argv);
-      printf(1, "init: exec sh failed\n");
+      printf("init: exec sh failed\n");
       exit(1);
     }
 
     // Wait for children to exit, reaping zombies
     while((wpid=wait(0)) >= 0 && wpid != pid)
-      printf(1, "zombie!\n");
+      printf("zombie!\n");
   }
 }
