@@ -142,6 +142,9 @@ UPROGS=\
 	$U/_forphan\
 	$U/_dorphan\
 	$U/_llmhelper\
+	$U/_cpubound\
+	$U/_iobound\
+	$U/_mixed\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)

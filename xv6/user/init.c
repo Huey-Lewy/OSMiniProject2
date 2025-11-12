@@ -1,16 +1,9 @@
-// user/init.c
-// init: The initial user-level program
+#include "types.h"
+#include "stat.h"
+#include "user.h"
+#include "fcntl.h"
 
-#include "kernel/types.h"
-#include "kernel/stat.h"
-#include "kernel/spinlock.h"
-#include "kernel/sleeplock.h"
-#include "kernel/fs.h"
-#include "kernel/file.h"
-#include "user/user.h"
-#include "kernel/fcntl.h"
-
-char *argv[] = { "sh", 0 };
+char *argv[] = { "sh", 0 };  // For shell
 
 int
 main(void)
@@ -18,46 +11,75 @@ main(void)
   int pid, wpid;
 
   if(open("console", O_RDWR) < 0){
-    mknod("console", CONSOLE, 0);
+    mknod("console", 1, 1);
     open("console", O_RDWR);
   }
   dup(0);  // stdout
   dup(0);  // stderr
 
-  // start llmhelper in background (reads advice from stdin)
-  if (fork() == 0) {
-    char *hargv[] = { "llmhelper", 0 };
-    exec("llmhelper", hargv);
-    printf("init: exec llmhelper failed\n");
+  // Start llmhelper in background (as per spec)
+  pid = fork();
+  if(pid < 0){
+    printf(1, "init: fork failed\n");
+    exit(1);
+  }
+  if(pid == 0){
+    exec("llmhelper", argv);  // argv can be reused since llmhelper takes no args
+    printf(1, "init: exec llmhelper failed\n");
+    exit(1);
+  }
+
+  // Automatically start cpubound in background
+  pid = fork();
+  if(pid < 0){
+    printf(1, "init: fork failed\n");
+    exit(1);
+  }
+  if(pid == 0){
+    exec("cpubound", argv);
+    printf(1, "init: exec cpubound failed\n");
+    exit(1);
+  }
+
+  // Automatically start iobound in background
+  pid = fork();
+  if(pid < 0){
+    printf(1, "init: fork failed\n");
+    exit(1);
+  }
+  if(pid == 0){
+    exec("iobound", argv);
+    printf(1, "init: exec iobound failed\n");
+    exit(1);
+  }
+
+  // Automatically start mixed in background
+  pid = fork();
+  if(pid < 0){
+    printf(1, "init: fork failed\n");
+    exit(1);
+  }
+  if(pid == 0){
+    exec("mixed", argv);
+    printf(1, "init: exec mixed failed\n");
     exit(1);
   }
 
   for(;;){
-    printf("init: starting sh\n");
+    printf(1, "init: starting sh\n");
     pid = fork();
     if(pid < 0){
-      printf("init: fork failed\n");
+      printf(1, "init: fork failed\n");
       exit(1);
     }
     if(pid == 0){
       exec("sh", argv);
-      printf("init: exec sh failed\n");
+      printf(1, "init: exec sh failed\n");
       exit(1);
     }
 
-    for(;;){
-      // this call to wait() returns if the shell exits,
-      // or if a parentless process exits.
-      wpid = wait((int *) 0);
-      if(wpid == pid){
-        // the shell exited; restart it.
-        break;
-      } else if(wpid < 0){
-        printf("init: wait returned an error\n");
-        exit(1);
-      } else {
-        // it was a parentless process; do nothing.
-      }
-    }
+    // Wait for children to exit, reaping zombies
+    while((wpid=wait(0)) >= 0 && wpid != pid)
+      printf(1, "zombie!\n");
   }
 }
