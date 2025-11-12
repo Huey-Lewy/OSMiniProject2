@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# agent/agent_bridge.py
 # Reads xv6 scheduler logs, asks Ollama for scheduling advice, writes guidance to shared file.
 
 import os
@@ -10,8 +11,6 @@ import subprocess
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 from pathlib import Path
-import math
-import random
 
 #### Paths (absolute, CWD-agnostic) ####
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -70,6 +69,13 @@ LLM_BASE = _pick_ollama_base()
 LLM_URL  = f"{LLM_BASE}/api/generate"
 INTERVAL = float(os.getenv("LLM_AGENT_INTERVAL", 1.0))  # seconds
 
+# Fallback scorer weights (tunable via env)
+W_WAIT   = float(os.getenv("LLM_AGENT_W_WAIT",   "1.5"))
+W_IO     = float(os.getenv("LLM_AGENT_W_IO",     "2.0"))
+W_RECENT = float(os.getenv("LLM_AGENT_W_RECENT", "0.5"))
+
+# Optional cap on how many runnable procs we include in the prompt
+MAX_PROCS_IN_PROMPT = int(os.getenv("LLM_AGENT_MAX_PROCS", "64"))
 
 #### Data Model ####
 @dataclass
@@ -94,13 +100,16 @@ class LLMSchedulerAgent:
         self.last_size = 0  # file cursor
         self.running = True
         self._last_sent_pid: Optional[int] = None
+        self._last_advised_ts: Optional[int] = None  # one advice per log snapshot
 
         print("====== LLM Scheduler Agent ======")
         print(f"[agent] Model     : {self.model}")
         print(f"[agent] Ollama    : {LLM_BASE}")
         print(f"[agent] Log file  : {self.log_file}")
         print(f"[agent] Advice    : {self.advice_file}")
-        print(f"[agent] Interval  : {self.interval}s\n")
+        print(f"[agent] Interval  : {self.interval}s")
+        print(f"[agent] Weights   : WAIT={W_WAIT} IO={W_IO} RECENT={W_RECENT}")
+        print(f"[agent] MaxProcs  : {MAX_PROCS_IN_PROMPT}\n")
 
         signal.signal(signal.SIGINT, self.stop)
         signal.signal(signal.SIGTERM, self.stop)
@@ -112,8 +121,10 @@ class LLMSchedulerAgent:
     # --------------------------
     # Internal implementation
     # --------------------------
-    def _read_log(self) -> Optional[List[ProcessStats]]:
-        """Read and parse the last complete SCHED_LOG block since last_size."""
+    def _read_log(self) -> Optional[Tuple[int, List[ProcessStats]]]:
+        """Read and parse the last complete SCHED_LOG block since last_size.
+        Returns (timestamp, processes) or None.
+        """
         try:
             size = os.path.getsize(self.log_file)
 
@@ -137,9 +148,16 @@ class LLMSchedulerAgent:
                 return None
             last = last.split("SCHED_LOG_END")[0]
 
+            log_ts: Optional[int] = None
             processes: List[ProcessStats] = []
+
             for line in last.splitlines():
-                if line.startswith("PROC:"):
+                if line.startswith("TIMESTAMP:"):
+                    try:
+                        log_ts = int(line.split(":", 1)[1].strip())
+                    except ValueError:
+                        log_ts = None
+                elif line.startswith("PROC:"):
                     p = line[5:].split(",")
                     if len(p) == 6:
                         try:
@@ -147,9 +165,11 @@ class LLMSchedulerAgent:
                         except ValueError:
                             continue
 
-            if processes:
-                print(f"[agent] Parsed {len(processes)} processes from scheduler log")
-            return processes or None
+            if log_ts is None or not processes:
+                return None
+
+            print(f"[agent] Parsed {len(processes)} processes from scheduler log @TS={log_ts}")
+            return (log_ts, processes)
 
         except FileNotFoundError:
             print("[agent] Waiting for sched_log.txt ...")
@@ -159,14 +179,18 @@ class LLMSchedulerAgent:
             return None
 
     def _runnable(self, procs: List[ProcessStats]) -> List[ProcessStats]:
-        """Only RUNNABLE procs (state==2) and pid>2 (skip init/shell)."""
-        return [p for p in procs if p.state == 2 and p.pid > 2]
+        """Only RUNNABLE procs (state==3) and pid>2 (skip init/shell)."""
+        return [p for p in procs if p.state == 3 and p.pid > 2]
 
     def _make_prompt(self, procs: List[ProcessStats]) -> Optional[str]:
         """Strict, refusal-proof prompt that forces 'PID:<n>'."""
         ready = self._runnable(procs)
         if not ready:
             return None
+
+        # Keep prompt bounded
+        if len(ready) > MAX_PROCS_IN_PROMPT:
+            ready = sorted(ready, key=lambda x: (-x.wait_ticks, -x.io_count))[:MAX_PROCS_IN_PROMPT]
 
         lines = [
             "You are an OS scheduler. Choose ONE process to run next.",
@@ -231,7 +255,7 @@ class LLMSchedulerAgent:
             return None
 
         def score(p: ProcessStats) -> Tuple[float, int]:
-            s = (1.5 * p.wait_ticks) + (2.0 * p.io_count) - (0.5 * p.recent_cpu)
+            s = (W_WAIT * p.wait_ticks) + (W_IO * p.io_count) - (W_RECENT * p.recent_cpu)
             # tiny deterministic jitter based on pid to avoid stable ties
             jitter = (hash(p.pid) % 7) * 0.01
             return (s + jitter, -p.cpu_ticks)  # secondary: lower total CPU first
@@ -240,19 +264,21 @@ class LLMSchedulerAgent:
         print(f"[agent] Fallback chose PID={best.pid}")
         return best.pid
 
-    def _write(self, pid: int):
-        """Append ADVICE line to file (flush + fsync) and de-duplicate repeats."""
+    def _write(self, pid: int, ts: int):
+        """Append advice line with TS (backward-compatible prefix)."""
         try:
-            if pid == self._last_sent_pid:
-                return  # avoid spamming identical advice
+            # de-dupe by timestamp and pid
+            if self._last_advised_ts == ts and pid == self._last_sent_pid:
+                return
 
-            line = f"ADVICE:PID={pid}\n"
+            line = f"ADVICE:PID={pid} TS={ts} V=1\n"
             with open(self.advice_file, "a", encoding="utf-8") as f:
                 f.write(line)
                 f.flush()
                 os.fsync(f.fileno())
 
             self._last_sent_pid = pid
+            self._last_advised_ts = ts
             print(f"[agent] Wrote advice → {line.strip()}")
         except Exception as e:
             print("[agent] Failed writing advice:", e)
@@ -296,26 +322,33 @@ class LLMSchedulerAgent:
     def run(self):
         print("[agent] Agent is running...\n")
         while self.running:
-            processes = self._read_log()
-            if processes:
+            parsed = self._read_log()
+            if parsed:
+                log_ts, processes = parsed
+
+                # Only one advice per timestamp
+                if self._last_advised_ts == log_ts:
+                    time.sleep(self.interval)
+                    continue
+
                 prompt = self._make_prompt(processes)
                 chosen_pid: Optional[int] = None
 
                 if prompt:
                     pid = self._ask_llm(prompt)
-                    # Validate: ensure the PID is runnable right now
+                    # Validate: ensure the PID is runnable right now (same snapshot)
                     runnable_pids = {p.pid for p in self._runnable(processes)}
                     if pid is not None and pid in runnable_pids:
                         chosen_pid = pid
                     else:
                         if pid is not None and pid not in runnable_pids:
-                            print(f"[agent] LLM suggested non-runnable PID {pid}; using fallback.")
+                            print(f"[agent] LLM suggested non-runnable PID {pid} @TS={log_ts}; using fallback.")
                         chosen_pid = self._fallback_choice(processes)
                 else:
                     chosen_pid = self._fallback_choice(processes)
 
                 if chosen_pid is not None:
-                    self._write(chosen_pid)
+                    self._write(chosen_pid, log_ts)
 
             time.sleep(self.interval)
         print("[agent] Agent stopped.")

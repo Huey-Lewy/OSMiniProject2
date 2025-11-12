@@ -16,7 +16,6 @@
 ├── xv6/                   # Modified xv6 source tree
 │   ├── kernel/                  # Kernel code (proc.c, syscall.c, etc.)
 │   ├── user/                    # User programs (includes llmhelper)
-│   ├── fs.img                   # Filesystem image
 │   └── Makefile                 # xv6 build configuration
 │
 ├── runner.py              # Orchestrates xv6 + QEMU + agent communication
