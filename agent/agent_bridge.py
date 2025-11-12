@@ -22,6 +22,9 @@ ADVICE_FILE = str(SHARED / "llm_advice.txt")
 SHARED.mkdir(exist_ok=True)
 Path(ADVICE_FILE).touch(exist_ok=True)  # ensure runner can tail it
 
+# Retry policy for invalid/unparsable/non-runnable LLM replies
+RETRIES = int(os.getenv("LLM_AGENT_RETRIES", "2"))           # total extra attempts (so tries = RETRIES+1)
+RETRY_SLEEP_MS = int(os.getenv("LLM_AGENT_RETRY_SLEEP_MS", "150"))
 
 #### Auto-Configuration ####
 def _detect_gateway() -> str:
@@ -109,7 +112,8 @@ class LLMSchedulerAgent:
         print(f"[agent] Advice    : {self.advice_file}")
         print(f"[agent] Interval  : {self.interval}s")
         print(f"[agent] Weights   : WAIT={W_WAIT} IO={W_IO} RECENT={W_RECENT}")
-        print(f"[agent] MaxProcs  : {MAX_PROCS_IN_PROMPT}\n")
+        print(f"[agent] MaxProcs  : {MAX_PROCS_IN_PROMPT}")
+        print(f"[agent] Retries   : {RETRIES} (sleep {RETRY_SLEEP_MS}ms between)\n")
 
         signal.signal(signal.SIGINT, self.stop)
         signal.signal(signal.SIGTERM, self.stop)
@@ -245,6 +249,24 @@ class LLMSchedulerAgent:
             print("[agent] LLM query failed:", e)
             return None
 
+    def _choose_with_retry(self, prompt: str, runnable_pids: set[int]) -> Optional[int]:
+        """
+        Ask the LLM up to RETRIES+1 times. Accept only a PID that is runnable in this snapshot.
+        Return PID or None if all tries fail.
+        """
+        tries = RETRIES + 1
+        for attempt in range(1, tries + 1):
+            pid = self._ask_llm(prompt)
+            if pid is not None and pid in runnable_pids:
+                return pid
+
+            reason = "unparsable" if pid is None else f"non-runnable ({pid})"
+            print(f"[agent] LLM response {reason}; retry {attempt}/{tries}")
+
+            if attempt < tries and RETRY_SLEEP_MS > 0:
+                time.sleep(RETRY_SLEEP_MS / 1000.0)
+        return None
+
     def _fallback_choice(self, procs: List[ProcessStats]) -> Optional[int]:
         """
         Deterministic fallback: score runnable procs and pick the best.
@@ -335,14 +357,12 @@ class LLMSchedulerAgent:
                 chosen_pid: Optional[int] = None
 
                 if prompt:
-                    pid = self._ask_llm(prompt)
-                    # Validate: ensure the PID is runnable right now (same snapshot)
                     runnable_pids = {p.pid for p in self._runnable(processes)}
-                    if pid is not None and pid in runnable_pids:
+                    pid = self._choose_with_retry(prompt, runnable_pids)
+                    if pid is not None:
                         chosen_pid = pid
                     else:
-                        if pid is not None and pid not in runnable_pids:
-                            print(f"[agent] LLM suggested non-runnable PID {pid} @TS={log_ts}; using fallback.")
+                        print(f"[agent] All retries failed @TS={log_ts}; using fallback.")
                         chosen_pid = self._fallback_choice(processes)
                 else:
                     chosen_pid = self._fallback_choice(processes)
