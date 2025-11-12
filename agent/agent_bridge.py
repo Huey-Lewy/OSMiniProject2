@@ -73,9 +73,9 @@ LLM_URL  = f"{LLM_BASE}/api/generate"
 INTERVAL = float(os.getenv("LLM_AGENT_INTERVAL", 1.0))  # seconds
 
 # Fallback scorer weights (tunable via env)
-W_WAIT   = float(os.getenv("LLM_AGENT_W_WAIT",   "1.5"))
-W_IO     = float(os.getenv("LLM_AGENT_W_IO",     "2.0"))
-W_RECENT = float(os.getenv("LLM_AGENT_W_RECENT", "0.5"))
+W_WAIT   = float(os.getenv("LLM_AGENT_W_WAIT",   "1.0"))
+W_IO     = float(os.getenv("LLM_AGENT_W_IO",     "1.0"))
+W_RECENT = float(os.getenv("LLM_AGENT_W_RECENT", "1.2"))
 
 # Optional cap on how many runnable procs we include in the prompt
 MAX_PROCS_IN_PROMPT = int(os.getenv("LLM_AGENT_MAX_PROCS", "64"))

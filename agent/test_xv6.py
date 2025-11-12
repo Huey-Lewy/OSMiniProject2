@@ -24,9 +24,9 @@ LOG_FILE.touch(exist_ok=True)
 ADVICE_FILE.touch(exist_ok=True)
 
 #### Weights (match agent defaults) ####
-W_WAIT   = float(os.getenv("LLM_AGENT_W_WAIT",   "1.5"))
-W_IO     = float(os.getenv("LLM_AGENT_W_IO",     "2.0"))
-W_RECENT = float(os.getenv("LLM_AGENT_W_RECENT", "0.5"))
+W_WAIT   = float(os.getenv("LLM_AGENT_W_WAIT",   "1.0"))
+W_IO     = float(os.getenv("LLM_AGENT_W_IO",     "1.0"))
+W_RECENT = float(os.getenv("LLM_AGENT_W_RECENT", "1.2"))
 
 # Adaptive timeout to account for agent retries
 _RETRIES = int(os.getenv("LLM_AGENT_RETRIES", "2"))

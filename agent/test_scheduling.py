@@ -26,9 +26,9 @@ LOG_FILE.touch(exist_ok=True)
 ADVICE_FILE.touch(exist_ok=True)
 
 #### Weights (match agent defaults for RECENT effect on stats only) ####
-W_WAIT   = float(os.getenv("LLM_AGENT_W_WAIT",   "1.5"))
-W_IO     = float(os.getenv("LLM_AGENT_W_IO",     "2.0"))
-W_RECENT = float(os.getenv("LLM_AGENT_W_RECENT", "0.5"))
+W_WAIT   = float(os.getenv("LLM_AGENT_W_WAIT",   "1.0"))
+W_IO     = float(os.getenv("LLM_AGENT_W_IO",     "1.0"))
+W_RECENT = float(os.getenv("LLM_AGENT_W_RECENT", "1.2"))
 
 RUNNABLE = 3
 
