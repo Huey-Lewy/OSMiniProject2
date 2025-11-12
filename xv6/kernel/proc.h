@@ -112,4 +112,5 @@ struct proc {
   int   io_count;              // Number of I/O operations
   int   recent_cpu;            // Recent CPU usage window
   uint  arrival_time;          // Creation timestamp (ticks)
+  int   priority;              // Scheduling priority
 };

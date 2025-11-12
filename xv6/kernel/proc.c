@@ -71,6 +71,7 @@ procinit(void)
     p->io_count = 0;
     p->recent_cpu = 0;
     p->arrival_time = 0;
+    p->priority = 1;  // Default priority
   }
 }
 
@@ -129,13 +130,14 @@ log_scheduling_state(void)
     if(p->state == UNUSED)
       continue;
 
-    printf("PROC:%d,%d,%d,%d,%d,%d\n",
+    printf("PROC:%d,%d,%d,%d,%d,%d,%d\n",
            p->pid,
            p->state,
            p->cpu_ticks,
            p->wait_ticks,
            p->io_count,
-           p->recent_cpu);
+           p->recent_cpu,
+           p->priority);
   }
 
   printf("SCHED_LOG_END\n");
@@ -185,6 +187,9 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  // Initialize priority
+  p->priority = 1;
+
   return p;
 }
 
@@ -223,6 +228,7 @@ freeproc(struct proc *p)
   p->io_count     = 0;
   p->recent_cpu   = 0;
   p->arrival_time = 0;
+  p->priority     = 1;  // Reset priority
 
   p->state = UNUSED;
 }
@@ -519,24 +525,39 @@ scheduler(void)
         acquire(&p->lock);
         if(p->state == RUNNABLE && p->pid == advised_pid) {
           selected = p;
-          acquire(&advice_lock);
-          llm_advice_valid = 0;  // consume advice
-          release(&advice_lock);
-          break;                 // keep selected->lock held
+          p->priority += 1;  // Boost priority
+          // Do not consume advice to keep it active
+          break;  // keep selected->lock held
         }
         release(&p->lock);
       }
     }
 
-    // Fallback: first RUNNABLE (keep lock if selected)
+    // Fallback: highest priority RUNNABLE (keep lock if selected)
     if(selected == 0) {
+      int highest_priority = -1;
       for(p = proc; p < &proc[NPROC]; p++) {
         acquire(&p->lock);
-        if(p->state == RUNNABLE) {
-          selected = p;          // keep selected->lock held
-          break;
+        if(p->state == RUNNABLE && p->priority > highest_priority) {
+          highest_priority = p->priority;
+          if(selected) {
+            release(&selected->lock);  // Release previous if found better
+          }
+          selected = p;
+        } else {
+          release(&p->lock);
         }
-        release(&p->lock);
+      }
+      if(selected) {
+        // Decay priorities of non-selected runnable processes
+        for(p = proc; p < &proc[NPROC]; p++) {
+          if(p != selected && p->state == RUNNABLE) {
+            acquire(&p->lock);
+            p->priority = (int)(p->priority * 0.9);
+            if(p->priority < 1) p->priority = 1;
+            release(&p->lock);
+          }
+        }
       }
     }
 
@@ -547,6 +568,10 @@ scheduler(void)
       // Update scheduling stats
       selected->cpu_ticks++;
       selected->recent_cpu++;
+
+      // Debug print
+      printf("Scheduler: Selected PID=%d (LLM advised=%d, Priority=%d)\n",
+             selected->pid, advised_pid, selected->priority);
 
       swtch(&c->context, &selected->context);
 
@@ -649,7 +674,7 @@ forkret(void)
     }
   }
 
-  // return to user space, mimicing usertrap()'s return.
+  // return to user space, mimicking usertrap()'s return.
   prepare_return();
   uint64 satp = MAKE_SATP(p->pagetable);
   uint64 trampoline_userret = TRAMPOLINE + (userret - trampoline);
@@ -803,7 +828,6 @@ procdump(void)
       state = states[p->state];
     else
       state = "???";
-    printf("%d %s %s", p->pid, state, p->name);
-    printf("\n");
+    printf("%d %s %s priority=%d\n", p->pid, state, p->name, p->priority);
   }
 }
