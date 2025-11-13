@@ -13,10 +13,26 @@
 │   ├── sched_log.txt            # Scheduler log (produced by xv6)
 │   └── llm_advice.txt           # LLM-generated advice (read by xv6)
 │
-├── xv6/                   # Modified xv6 source tree
-│   ├── kernel/                  # Kernel code (proc.c, syscall.c, etc.)
-│   ├── user/                    # User programs (includes llmhelper)
-│   └── Makefile                 # xv6 build configuration
+├── xv6/
+│   ├── Makefile
+│   ├── kernel/
+│   │   ├── defs.h                 # Adds prototypes for scheduling stats + LLM advice
+│   │   ├── proc.h                 # Adds proc fields for scheduling stats + LLM advice
+│   │   ├── proc.c                 # Adds tick accounting, state logging, advice storage, scheduler use
+│   │   ├── sysfile.c              # Increments io_count on FS operations
+│   │   ├── sysproc.c              # Implements sys_set_llm_advice
+│   │   ├── syscall.c              # Adds syscall to dispatch table
+│   │   ├── syscall.h              # Defines SYS_set_llm_advice number
+│   │   ├── trap.c                 # Calls update_sched_stats_on_tick on timer interrupts
+│   │   └── ... (Other kernel files unchanged)
+│   └── user/
+│       ├── llmhelper.c            # Reads stdin and calls set_llm_advice
+│       ├── cpubound.c             # CPU-bound workload
+│       ├── iobound.c              # IO-bound workload
+│       ├── mixed.c                # Mixed CPU/IO workload
+│       ├── user.h                 # Declares set_llm_advice
+│       ├── usys.pl                # Generates syscall stub for set_llm_advice
+│       └── ... (Other user programs unchanged)
 │
 ├── runner.py              # Orchestrates xv6 + QEMU + agent communication
 ├── requirements.txt       # Python dependencies
