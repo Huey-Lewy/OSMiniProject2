@@ -5,37 +5,40 @@
 ## Repository Layout
 
 ```
-├── agent/                 # Python LLM bridge
-│   ├── agent_bridge.py          # Reads xv6 logs, sends scheduling advice
-│   └── test_agent.py            # Test harness for mock communication
+├── agent/
+│   ├── agent_bridge.py      # Reads scheduler logs, queries LLM, writes ADVICE lines
+│   ├── test_agent.py        # Tests: log parsing, prompt generation, LLM connectivity
+│   ├── test_xv6.py          # Synthetic SCHED_LOG feed → verifies PID choices
+│   └── test_scheduling.py   # Full simulated scheduler using agent advice
 │
-├── shared/                # Shared communication directory
-│   ├── sched_log.txt            # Scheduler log (produced by xv6)
-│   └── llm_advice.txt           # LLM-generated advice (read by xv6)
+├── shared/
+│   ├── sched_log.txt        # Produced by xv6 (via runner.py)
+│   └── llm_advice.txt       # Written by agent_bridge.py, consumed by xv6
 │
 ├── xv6/
-│   ├── Makefile
+│   ├── Makefile             # Adds llmhelper and workloads to UPROGS
 │   ├── kernel/
-│   │   ├── defs.h                 # Adds prototypes for scheduling stats + LLM advice
-│   │   ├── proc.h                 # Adds proc fields for scheduling stats + LLM advice
-│   │   ├── proc.c                 # Adds tick accounting, state logging, advice storage, scheduler use
-│   │   ├── sysfile.c              # Increments io_count on FS operations
-│   │   ├── sysproc.c              # Implements sys_set_llm_advice
-│   │   ├── syscall.c              # Adds syscall to dispatch table
-│   │   ├── syscall.h              # Defines SYS_set_llm_advice number
-│   │   ├── trap.c                 # Calls update_sched_stats_on_tick on timer interrupts
-│   │   └── ... (Other kernel files unchanged)
+│   │   ├── defs.h           # Prototypes for scheduling stat helpers + set_llm_advice
+│   │   ├── proc.h           # Extended struct proc: cpu_ticks, wait_ticks, io_count, recent_cpu
+│   │   ├── proc.c           # Tick accounting, state logging, scheduler uses advice
+│   │   ├── sysproc.c        # sys_set_llm_advice, increments io_count via sys_sleep
+│   │   ├── syscall.c        # Adds SYS_set_llm_advice to dispatch table
+│   │   ├── syscall.h        # Defines syscall number
+│   │   ├── trap.c           # Tick-based process stat updates + log interval triggers
+│   │   └── ... (others unchanged)
 │   └── user/
-│       ├── llmhelper.c            # Reads stdin and calls set_llm_advice
-│       ├── cpubound.c             # CPU-bound workload
-│       ├── iobound.c              # IO-bound workload
-│       ├── mixed.c                # Mixed CPU/IO workload
-│       ├── user.h                 # Declares set_llm_advice
-│       ├── usys.pl                # Generates syscall stub for set_llm_advice
-│       └── ... (Other user programs unchanged)
+│       ├── llmhelper.c      # Reads ADVICE:PID=X from stdin, calls set_llm_advice
+│       ├── cpubound.c       # CPU-heavy workload
+│       ├── iobound.c        # IO-heavy workload
+│       ├── mixed.c          # Mixed CPU/IO workload
+│       ├── init.c           # Spawns llmhelper at boot
+│       ├── user.h           # Declares set_llm_advice()
+│       ├── usys.pl          # Generates user stub
+│       └── ... (others unchanged)
 │
-├── runner.py              # Orchestrates xv6 + QEMU + agent communication
-├── requirements.txt       # Python dependencies
+├── runner.py                # Streams xv6 output, extracts logs, pipes ADVICE into xv6
+├── analyze_results.py       # Parses sched_log.txt → generates CPU/wait/IO plots
+├── requirements.txt
 ├── LICENSE
 └── README.md
 ```
