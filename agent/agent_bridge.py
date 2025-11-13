@@ -20,11 +20,15 @@ LOG_FILE    = str(SHARED / "sched_log.txt")
 ADVICE_FILE = str(SHARED / "llm_advice.txt")
 
 SHARED.mkdir(exist_ok=True)
-Path(ADVICE_FILE).touch(exist_ok=True)  # ensure runner can tail it
+Path(ADVICE_FILE).touch(exist_ok=True)  # so runner can tail it
 
 # Retry policy for invalid/unparsable/non-runnable LLM replies
-RETRIES = int(os.getenv("LLM_AGENT_RETRIES", "2"))           # total extra attempts (so tries = RETRIES+1)
+RETRIES        = int(os.getenv("LLM_AGENT_RETRIES", "2"))              # extra attempts (tries = RETRIES+1)
 RETRY_SLEEP_MS = int(os.getenv("LLM_AGENT_RETRY_SLEEP_MS", "150"))
+
+# LLM generation knobs
+LLM_TEMP       = float(os.getenv("LLM_AGENT_TEMPERATURE", "0.0"))
+LLM_NUM_PRED   = int(os.getenv("LLM_AGENT_NUM_PREDICT", "16"))
 
 #### Auto-Configuration ####
 def _detect_gateway() -> str:
@@ -113,7 +117,8 @@ class LLMSchedulerAgent:
         print(f"[agent] Interval  : {self.interval}s")
         print(f"[agent] Weights   : WAIT={W_WAIT} IO={W_IO} RECENT={W_RECENT}")
         print(f"[agent] MaxProcs  : {MAX_PROCS_IN_PROMPT}")
-        print(f"[agent] Retries   : {RETRIES} (sleep {RETRY_SLEEP_MS}ms between)\n")
+        print(f"[agent] Retries   : {RETRIES} (sleep {RETRY_SLEEP_MS}ms between)")
+        print(f"[agent] LLM opts  : temp={LLM_TEMP} num_predict={LLM_NUM_PRED}\n")
 
         signal.signal(signal.SIGINT, self.stop)
         signal.signal(signal.SIGTERM, self.stop)
@@ -187,7 +192,7 @@ class LLMSchedulerAgent:
         return [p for p in procs if p.state == 3 and p.pid > 2]
 
     def _make_prompt(self, procs: List[ProcessStats]) -> Optional[str]:
-        """Strict, refusal-proof prompt that forces 'PID:<n>'."""
+        """Strict prompt that asks for 'PID:<n>' only."""
         ready = self._runnable(procs)
         if not ready:
             return None
@@ -223,7 +228,7 @@ class LLMSchedulerAgent:
                     "model": self.model,
                     "prompt": prompt,
                     "stream": False,
-                    "options": {"temperature": 0.2, "num_predict": 32},
+                    "options": {"temperature": LLM_TEMP, "num_predict": LLM_NUM_PRED},
                 },
                 timeout=8,
             )
@@ -348,8 +353,20 @@ class LLMSchedulerAgent:
             if parsed:
                 log_ts, processes = parsed
 
-                # Only one advice per timestamp
+                # One advice per timestamp
                 if self._last_advised_ts == log_ts:
+                    time.sleep(self.interval)
+                    continue
+
+                # Fast paths: 0 or 1 runnable
+                runnable = self._runnable(processes)
+                if len(runnable) == 0:
+                    # nothing to do for this snapshot
+                    time.sleep(self.interval)
+                    continue
+                if len(runnable) == 1:
+                    # single option → no need to call LLM
+                    self._write(runnable[0].pid, log_ts)
                     time.sleep(self.interval)
                     continue
 
@@ -357,7 +374,7 @@ class LLMSchedulerAgent:
                 chosen_pid: Optional[int] = None
 
                 if prompt:
-                    runnable_pids = {p.pid for p in self._runnable(processes)}
+                    runnable_pids = {p.pid for p in runnable}
                     pid = self._choose_with_retry(prompt, runnable_pids)
                     if pid is not None:
                         chosen_pid = pid
