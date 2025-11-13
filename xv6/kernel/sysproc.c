@@ -7,6 +7,12 @@
 #include "proc.h"
 #include "vm.h"
 
+// ---- LLM-advised scheduler: syscall to set advice from user space ----
+// kernel helper + proc[] access
+extern int set_llm_advice_kernel(int pid, int ts);
+extern struct proc proc[NPROC];
+
+
 uint64
 sys_exit(void)
 {
@@ -106,4 +112,33 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+// Record LLM scheduling advice (PID + optional TS) into the kernel's advice slot
+uint64
+sys_set_llm_advice(void)
+{
+  int pid, ts = 0;
+
+  // argint() has no return value in this tree; it simply writes into the out param.
+  // If the caller omits the second argument, ts ends up with whatever argint wrote.
+  argint(0, &pid);
+  argint(1, &ts);
+
+  // Minimal validation: only allow advice for processes that are currently RUNNABLE.
+  // This avoids accepting advice for nonexistent, sleeping, or zombie processes.
+  struct proc *p;
+  int ok = 0;
+  for(p = proc; p < &proc[NPROC]; p++){
+    acquire(&p->lock);
+    if(p->pid == pid && p->state == RUNNABLE)
+      ok = 1;
+    release(&p->lock);
+    if(ok) break;
+  }
+  if(!ok)
+    return -1;
+
+  // Store the advice for the scheduler to consume.
+  return set_llm_advice_kernel(pid, ts);
 }

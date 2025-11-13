@@ -169,6 +169,9 @@ clockintr()
     ticks++;
     wakeup(&ticks);
     release(&tickslock);
+
+    // per-tick scheduler accounting (CPU0 drives global time)
+    update_sched_stats_on_tick();
   }
 
   // ask for the next timer interrupt. this also clears

@@ -104,4 +104,12 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  // --- Scheduling statistics (LLM-advised scheduler) ---
+  int  cpu_ticks;              // Total CPU time (ticks while RUNNING)
+  int  wait_ticks;             // Total wait time (ticks while RUNNABLE)
+  int  io_count;               // Count of I/O ops (reads/writes)
+  int  recent_cpu;             // Decayed recent CPU usage
+  uint arrival_time;           // Tick when process was created
+  int  nice;                   // User-set priority hint
 };

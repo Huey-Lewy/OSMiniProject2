@@ -12,6 +12,29 @@ struct proc proc[NPROC];
 
 struct proc *initproc;
 
+// ---- LLM-advised scheduling: constants ----
+#define LOG_INTERVAL    50     // emit a SCHED_LOG_* block every 50 ticks
+#define ADVICE_TTL      200    // advice remains valid for 200 ticks
+#define DECAY_INTERVAL  100    // decay RECENT every 100 ticks
+#define DECAY_NUM       4
+#define DECAY_DEN       5
+
+// Keep this local #define after headers so it won't affect proc.h's enum.
+#define RUNNABLE        3      // readability when checking p->state
+
+// ---- LLM advice state ----
+struct llm_advice {
+  int  pid;
+  int  ts;
+  uint expire;
+  int  valid;
+};
+
+static struct {
+  struct spinlock lock;
+  struct llm_advice adv;
+} llm;
+
 int nextpid = 1;
 struct spinlock pid_lock;
 
@@ -51,9 +74,20 @@ procinit(void)
   
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
+
+  // Initialize global lock for the LLM scheduler.  
+  // This lock protects access to shared LLM-scheduling metadata.
+  initlock(&llm.lock, "llm");
+
+  // Mark the LLM advisory scheduling structure as invalid.
+  // The scheduler will ignore it until an advisory update is installed.
+  llm.adv.valid = 0;
+
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
       p->state = UNUSED;
+
+      // Assign each process its kernel stack based on its index.
       p->kstack = KSTACK((int) (p - proc));
   }
 }
@@ -124,6 +158,14 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+
+  // Initialize per-process scheduling metrics for the LLM scheduler.
+  p->cpu_ticks    = 0;      // Total CPU time the process has consumed.
+  p->wait_ticks   = 0;      // Time spent ready but not running.
+  p->io_count     = 0;      // Number of I/O operations initiated.
+  p->recent_cpu   = 0;      // Exponentially-weighted recent CPU usage.
+  p->arrival_time = ticks;  // Timestamp marking when the process was created.
+  p->nice         = 0;      // Niceness hint influencing scheduling priority.
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -415,48 +457,84 @@ kwait(uint64 addr)
 }
 
 // Per-CPU process scheduler.
-// Each CPU calls scheduler() after setting itself up.
-// Scheduler never returns.  It loops, doing:
-//  - choose a process to run.
-//  - swtch to start running that process.
-//  - eventually that process transfers control
-//    via swtch back to the scheduler.
+// Each CPU calls scheduler() after it starts.
+// Scheduler never returns. It loops, doing:
+//  - handle periodic logging and check any LLM scheduling advice.
+//  - choose a RUNNABLE process (using advice if valid, else round-robin).
+//  - swtch to run that process.
+//  - the process eventually swtches back to the scheduler.
 void
 scheduler(void)
 {
-  struct proc *p;
   struct cpu *c = mycpu();
+  static uint last_log_at = 0;
 
   c->proc = 0;
   for(;;){
-    // The most recent process to run may have had interrupts
-    // turned off; enable them to avoid a deadlock if all
-    // processes are waiting. Then turn them back off
-    // to avoid a possible race between an interrupt
-    // and wfi.
+    // Standard xv6 pattern: briefly enable then disable interrupts
+    // to ensure pending interrupts are serviced before scheduling.
     intr_on();
     intr_off();
 
-    int found = 0;
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-        found = 1;
-      }
-      release(&p->lock);
+    // Emit periodic scheduler-state logs.
+    // No process locks are held here to avoid blocking other CPUs.
+    if(ticks - last_log_at >= LOG_INTERVAL){
+      last_log_at = ticks;
+      log_scheduling_state();
     }
-    if(found == 0) {
-      // nothing to run; stop running on this core until an interrupt.
+
+    // Snapshot any LLM-generated scheduling advice.
+    // Reading and copying it under llm.lock ensures consistency.
+    struct llm_advice a;
+    acquire(&llm.lock);
+    a = llm.adv;
+    release(&llm.lock);
+
+    struct proc *selected = 0;
+
+    // If the advice has not expired, try to use it.
+    // This attempts to pick the specific advised pid if RUNNABLE.
+    if(a.valid && ticks < a.expire){
+      for(struct proc *p = proc; p < &proc[NPROC]; p++) {
+        acquire(&p->lock);
+        if(p->state == RUNNABLE && p->pid == a.pid){
+          selected = p;                 // Keep p->lock held for the context switch
+          // Advice is consumed once used; mark it invalid.
+          acquire(&llm.lock);
+          llm.adv.valid = 0;
+          release(&llm.lock);
+          break;
+        }
+        release(&p->lock);
+      }
+    }
+
+    // Fallback path: round-robin scan.
+    // The first RUNNABLE process encountered becomes the selection.
+    if(selected == 0){
+      for(struct proc *p = proc; p < &proc[NPROC]; p++) {
+        acquire(&p->lock);
+        if(p->state == RUNNABLE){
+          selected = p;                 // Keep p->lock held for the context switch
+          break;
+        }
+        release(&p->lock);
+      }
+    }
+
+    if(selected){
+      // Transition to the selected process.
+      // Matches xv6’s established RUNNING transition and swtch protocol.
+      selected->state = RUNNING;
+      c->proc = selected;
+      swtch(&c->context, &selected->context);
+      c->proc = 0;
+
+      // After returning from swtch(), the process is not running
+      // and its lock (held on entry) must be released here.
+      release(&selected->lock);
+    } else {
+      // No RUNNABLE processes were found—enter low-power wait.
       asm volatile("wfi");
     }
   }
@@ -687,4 +765,79 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+// Called once per timer tick from trap.c
+void
+update_sched_stats_on_tick(void)
+{
+  // Every DECAY_INTERVAL ticks, we apply exponential decay to recent_cpu.
+  int do_decay = (ticks % DECAY_INTERVAL) == 0;
+
+  for(struct proc *p = proc; p < &proc[NPROC]; p++) {
+    // Acquire the per-process lock before modifying scheduling statistics.
+    acquire(&p->lock);
+
+    if(p->state == RUNNING){
+      // Process is currently on CPU: increment total CPU time
+      // and its short-term recent_cpu usage.
+      p->cpu_ticks++;
+      p->recent_cpu++;
+    } else if(p->state == RUNNABLE){
+      // Process is ready but not running: track how long it waits.
+      p->wait_ticks++;
+    }
+
+    if(do_decay){
+      // Periodically dampen recent_cpu to give more weight
+      // to recent behavior rather than old CPU bursts.
+      p->recent_cpu = (p->recent_cpu * DECAY_NUM) / DECAY_DEN;
+    }
+
+    release(&p->lock);
+  }
+}
+
+// Emit a complete snapshot of per-process scheduler state in a
+// machine-readable format for the LLM agent.
+// Avoid holding any p->lock while printing multiple records.
+void
+log_scheduling_state(void)
+{
+  printf("SCHED_LOG_START\n");
+  printf("TIMESTAMP:%d\n", ticks);
+
+  for(struct proc *p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state != UNUSED){
+      // Log a single process line:
+      // PROC:<pid>,<state>,<cpu_ticks>,<wait_ticks>,<io_count>,<recent_cpu>
+      printf("PROC:%d,%d,%d,%d,%d,%d\n",
+             p->pid, p->state, p->cpu_ticks, p->wait_ticks,
+             p->io_count, p->recent_cpu);
+    }
+    release(&p->lock);
+  }
+
+  printf("SCHED_LOG_END\n");
+}
+
+// Kernel-side advice setter for the LLM-advised scheduler.
+// Sets an advisory hint for the process with the given pid,
+// suggesting a timeslice or priority hint (ts).
+// The advice remains valid for a fixed TTL and influences
+// the next scheduling decision made by the scheduler.
+int
+set_llm_advice_kernel(int pid, int ts)
+{
+  // Update the global advisory structure used by the LLM scheduler.
+  // This advice influences the next scheduling decision and remains valid until its TTL expires.
+  acquire(&llm.lock);
+  llm.adv.pid    = pid;                 // Target process for the advisory hint
+  llm.adv.ts     = ts;                  // Suggested timeslice or priority hint
+  llm.adv.expire = ticks + ADVICE_TTL;  // When this advice becomes invalid
+  llm.adv.valid  = 1;                   // Advice is now active
+  release(&llm.lock);
+
+  return 0;
 }

@@ -69,29 +69,68 @@ uint64
 sys_read(void)
 {
   struct file *f;
-  int n;
+  int n, r;
   uint64 p;
 
+  // Fetch user buffer pointer (arg1) and byte count (arg2).
+  // The syscall signature is read(fd, buf, n).
   argaddr(1, &p);
   argint(2, &n);
+
+  // Resolve the file descriptor (arg0) to a struct file*.
+  // argfd checks bounds and fetches the open file.
   if(argfd(0, 0, &f) < 0)
     return -1;
-  return fileread(f, p, n);
+
+  // Perform the actual read from the file into user memory.
+  r = fileread(f, p, n);
+
+  // If the read succeeded, attribute it to the current process.
+  // This feeds into scheduler heuristics (I/O-biased workloads, etc.).
+  if(r > 0){
+    struct proc *cur = myproc();
+    if(cur){
+      acquire(&cur->lock);
+      cur->io_count++;   // count this syscall as one I/O event
+      release(&cur->lock);
+    }
+  }
+
+  // Return number of bytes read (or negative error).
+  return r;
 }
 
 uint64
 sys_write(void)
 {
   struct file *f;
-  int n;
+  int n, r;
   uint64 p;
   
+  // Same layout as read(): buf pointer, size.
   argaddr(1, &p);
   argint(2, &n);
+
+  // Fetch the struct file* from fd.
   if(argfd(0, 0, &f) < 0)
     return -1;
 
-  return filewrite(f, p, n);
+  // Write user memory into the file.
+  r = filewrite(f, p, n);
+
+  // Update I/O stats on successful write.
+  // Treat reads/writes uniformly for the scheduler.
+  if(r > 0){
+    struct proc *cur = myproc();
+    if(cur){
+      acquire(&cur->lock);
+      cur->io_count++;   // one write = one I/O event
+      release(&cur->lock);
+    }
+  }
+
+  // Return number of bytes written (or negative error).
+  return r;
 }
 
 uint64
