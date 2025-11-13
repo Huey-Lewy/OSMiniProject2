@@ -23,15 +23,6 @@ main(void)
   dup(0);  // stdout
   dup(0);  // stderr
 
-  // --- start llmhelper early (background) ---
-  if(fork() == 0){
-    char *a[] = { "llmhelper", 0 };
-    exec("llmhelper", a);
-    printf("init: exec llmhelper failed\n");
-    exit(1);
-  }
-  // ------------------------------------------
-
   for(;;){
     printf("init: starting sh\n");
     pid = fork();
@@ -46,14 +37,17 @@ main(void)
     }
 
     for(;;){
+      // this call to wait() returns if the shell exits,
+      // or if a parentless process exits.
       wpid = wait((int *) 0);
       if(wpid == pid){
+        // the shell exited; restart it.
         break;
       } else if(wpid < 0){
         printf("init: wait returned an error\n");
         exit(1);
       } else {
-        // orphaned child reaped; continue
+        // it was a parentless process; do nothing.
       }
     }
   }

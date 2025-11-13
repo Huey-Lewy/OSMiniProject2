@@ -111,7 +111,6 @@ python3 agent/agent_bridge.py
 
 ```bash
 # Build and launch xv6 with LLM integration
-cd xv6 && make clean && make fs.img kernel && cd ..
 python3 runner.py
 ```
 
