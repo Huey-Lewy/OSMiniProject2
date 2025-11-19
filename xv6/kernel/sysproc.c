@@ -7,6 +7,13 @@
 #include "proc.h"
 #include "vm.h"
 
+// LLM advice state lives in the scheduler (proc.c).
+// This syscall only updates that shared state.
+extern struct spinlock llm_lock;
+extern int  llm_recommended_pid;
+extern int  llm_advice_valid;
+extern uint llm_advice_timestamp;
+
 uint64
 sys_exit(void)
 {
@@ -32,6 +39,14 @@ uint64
 sys_wait(void)
 {
   uint64 p;
+  struct proc *cur = myproc();
+
+  // Waiting for a child is a blocking-style operation from the
+  // scheduler's point of view, so treat it as I/O-like activity.
+  if(cur != 0) {
+    cur->io_count++;
+  }
+
   argaddr(0, &p);
   return kwait(p);
 }
@@ -53,7 +68,7 @@ sys_sbrk(void)
     }
   } else {
     // Lazily allocate memory for this process: increase its memory
-    // size but don't allocate memory. If the processes uses the
+    // size but don't allocate memory. If the process uses the
     // memory, vmfault() will allocate it.
     if(addr + n < addr)
       return -1;
@@ -69,13 +84,20 @@ sys_pause(void)
 {
   int n;
   uint ticks0;
+  struct proc *p = myproc();
+
+  // Count pause as an I/O-style blocking event so the scheduler
+  // can treat it like a simple sleep-like syscall.
+  if(p != 0) {
+    p->io_count++;
+  }
 
   argint(0, &n);
   if(n < 0)
     n = 0;
   acquire(&tickslock);
   ticks0 = ticks;
-  while(ticks - ticks0 < n){
+  while(ticks - ticks0 < (uint)n){
     if(killed(myproc())){
       release(&tickslock);
       return -1;
@@ -106,4 +128,31 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+// Inject LLM scheduling advice into the kernel.
+//
+// User space (llmhelper) calls set_llm_advice(pid),
+// which is wired to this syscall. The scheduler reads
+// llm_recommended_pid / llm_advice_valid under llm_lock
+// and will try to run that PID next, subject to sanity checks.
+uint64
+sys_set_llm_advice(void)
+{
+  int pid = -1;
+
+  // argint() has void return type in this tree; it writes into pid.
+  argint(0, &pid);
+
+  // Simple sanity check; the scheduler will do the final validation.
+  if(pid <= 0)
+    return -1;
+
+  acquire(&llm_lock);
+  llm_recommended_pid  = pid;
+  llm_advice_valid     = 1;
+  llm_advice_timestamp = ticks;
+  release(&llm_lock);
+
+  return 0;
 }

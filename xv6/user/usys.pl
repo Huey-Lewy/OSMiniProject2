@@ -10,11 +10,13 @@ sub entry {
     my $prefix = "sys_";
     my $name = shift;
     if ($name eq "sbrk") {
-	print ".global $prefix$name\n";
-	print "$prefix$name:\n";
+        # sbrk has a sys_sbrk stub; user-level sbrk/sbrklazy
+        # are implemented in user space on top of this.
+        print ".global ${prefix}${name}\n";
+        print "${prefix}${name}:\n";
     } else {
-	print ".global $name\n";
-	print "$name:\n";
+        print ".global ${name}\n";
+        print "${name}:\n";
     }
     print " li a7, SYS_${name}\n";
     print " ecall\n";
@@ -42,3 +44,4 @@ entry("getpid");
 entry("sbrk");
 entry("pause");
 entry("uptime");
+entry("set_llm_advice");

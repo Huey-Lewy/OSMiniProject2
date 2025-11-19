@@ -103,5 +103,13 @@ struct proc {
   struct context context;      // swtch() here to run process
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
+
+  // Scheduling statistics for LLM-advised scheduling.
+  // Updated by the scheduler/timer and exported in SCHED_LOG snapshots.
+  int cpu_ticks;               // Total ticks this process has run on CPU
+  int wait_ticks;              // Ticks spent RUNNABLE but not running
+  int io_count;                // Count of times the process blocked (e.g., sleep)
+  int recent_cpu;              // Short-term CPU usage metric
+
   char name[16];               // Process name (debugging)
 };

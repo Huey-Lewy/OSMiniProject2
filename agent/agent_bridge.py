@@ -2,6 +2,18 @@
 # agent/agent_bridge.py
 # Reads xv6 scheduler logs, asks an Ollama model for scheduling advice,
 # and writes the chosen PID to a shared advice file for the OS or tooling to consume.
+#
+# Expected scheduler log format (produced by the modified xv6 kernel):
+#
+#   SCHED_LOG_START
+#   TIMESTAMP:<ticks>
+#   PROC:<pid>,<state>,<cpu_ticks>,<wait_ticks>,<io_count>,<recent_cpu>
+#   PROC:...
+#   ...
+#   SCHED_LOG_END
+#
+# where `ticks` is the kernel's global timer tick counter and `state`
+# is the enum value from xv6 (RUNNABLE == 3).
 
 import os
 import re
@@ -95,8 +107,8 @@ class ProcessStats:
         state       (int): Scheduler state (3 == RUNNABLE for xv6).
         cpu_ticks   (int): Total CPU ticks consumed.
         wait_ticks  (int): Time spent waiting to be scheduled.
-        io_count    (int): Count of I/O operations or similar hint.
-        recent_cpu  (int): Recent CPU usage (e.g., last quantum window).
+        io_count    (int): Count of I/O-style blocking events.
+        recent_cpu  (int): Recent CPU usage (e.g., ticks in the latest window).
     """
     pid: int
     state: int
@@ -165,12 +177,14 @@ class LLMSchedulerAgent:
 
         Returns:
             tuple[int, list[ProcessStats]]: (timestamp, processes) if a complete
-                block was parsed successfully.
+                block was parsed successfully. The timestamp is the kernel's
+                global tick count at the time of logging.
             None: If the log doesn't contain a complete block yet or an error occurs.
 
-        Log format (simplified):
+        Log format (simplified, matches the modified xv6 kernel):
+
             SCHED_LOG_START
-            TIMESTAMP:<unix_ts>
+            TIMESTAMP:<ticks>
             PROC:<pid>,<state>,<cpu_ticks>,<wait_ticks>,<io_count>,<recent_cpu>
             ...
             SCHED_LOG_END
@@ -207,13 +221,16 @@ class LLMSchedulerAgent:
             # Parse header and process lines.
             for line in last.splitlines():
                 if line.startswith("TIMESTAMP:"):
-                    # Extract integer timestamp.
+                    # Extract integer tick timestamp.
                     try:
                         log_ts = int(line.split(":", 1)[1].strip())
                     except ValueError:
                         log_ts = None
                 elif line.startswith("PROC:"):
                     # Extract the comma-separated numeric fields for a process.
+                    # Order must match the kernel's printf():
+                    #   PROC:%d,%d,%d,%d,%d,%d
+                    #        pid,state,cpu,wait,io,recent
                     p = line[5:].split(",")
                     if len(p) == 6:
                         try:
@@ -387,6 +404,9 @@ class LLMSchedulerAgent:
 
         Format:
             ADVICE:PID=<pid> TS=<timestamp> V=1
+
+        where `timestamp` is the same tick value that appeared in TIMESTAMP:<ticks>
+        for the corresponding scheduler snapshot.
         """
         try:
             # If we already wrote an identical (pid, timestamp) advice, skip it.
@@ -503,6 +523,7 @@ class LLMSchedulerAgent:
             time.sleep(self.interval)
 
         print("[agent] Agent stopped.")
+
 
 if __name__ == "__main__":
     LLMSchedulerAgent().run()

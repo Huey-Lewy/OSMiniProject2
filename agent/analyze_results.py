@@ -17,10 +17,19 @@ SCHED_LOG_PATH  = SHARED / "sched_log.txt"
 ADVICE_LOG_PATH = SHARED / "llm_advice.txt"
 OUTPUT_FIG_PATH = SHARED / "scheduling_analysis.png"
 
+
 #### Parsing helpers ####
 def parse_sched_log(path: Path):
     """
     Parse sched_log.txt and build per-PID time series.
+
+    Expected log blocks (emitted by the modified kernel):
+
+        SCHED_LOG_START
+        TIMESTAMP:<ticks>
+        PROC:<pid>,<state>,<cpu_ticks>,<wait_ticks>,<io_count>,<recent_cpu>
+        ...
+        SCHED_LOG_END
 
     Returns:
         tuple:
@@ -115,9 +124,14 @@ def parse_sched_log(path: Path):
     print(f"[analyze] Parsed {len(sorted_ts)} snapshots and {len(metrics)} PIDs from {path}")
     return metrics, sorted_ts
 
+
 def parse_llm_advice(path: Path):
     """
     Parse llm_advice.txt into a mapping of timestamp -> chosen PID.
+
+    Expected format per line:
+
+        ADVICE:PID=<pid> TS=<ts> V=1
 
     Returns:
         dict[int, int]: advice[ts] = pid
@@ -257,6 +271,9 @@ def print_summary(metrics, advice):
 def main():
     """
     Entry point for standalone analysis script.
+
+    Optional CLI:
+        analyze_results.py [sched_log] [llm_advice]
     """
     # Optional overrides: analyze_results.py [sched_log] [llm_advice]
     sched_path = Path(sys.argv[1]) if len(sys.argv) >= 2 else SCHED_LOG_PATH

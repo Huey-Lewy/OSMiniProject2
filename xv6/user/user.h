@@ -21,22 +21,26 @@ int mkdir(const char*);
 int chdir(const char*);
 int dup(int);
 int getpid(void);
-char* sys_sbrk(int,int);
+char* sys_sbrk(int, int);
 int pause(int);
 int uptime(void);
 
+// LLM scheduler integration: user wrapper for the set_llm_advice syscall.
+// llmhelper.c calls this to inject a recommended PID into the kernel.
+int set_llm_advice(int pid);
+
 // ulib.c
-int stat(const char*, struct stat*);
+int   stat(const char*, struct stat*);
 char* strcpy(char*, const char*);
-void *memmove(void*, const void*, int);
+void* memmove(void*, const void*, int);
 char* strchr(const char*, char c);
-int strcmp(const char*, const char*);
+int   strcmp(const char*, const char*);
 char* gets(char*, int max);
-uint strlen(const char*);
+uint  strlen(const char*);
 void* memset(void*, int, uint);
-int atoi(const char*);
-int memcmp(const void *, const void *, uint);
-void *memcpy(void *, const void *, uint);
+int   atoi(const char*);
+int   memcmp(const void *, const void *, uint);
+void* memcpy(void *, const void *, uint);
 char* sbrk(int);
 char* sbrklazy(int);
 
@@ -46,4 +50,4 @@ void printf(const char*, ...) __attribute__ ((format (printf, 1, 2)));
 
 // umalloc.c
 void* malloc(uint);
-void free(void*);
+void  free(void*);

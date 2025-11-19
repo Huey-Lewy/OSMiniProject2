@@ -123,6 +123,7 @@ mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
 # http://www.gnu.org/software/make/manual/html_node/Chained-Rules.html
 .PRECIOUS: %.o
 
+# User programs that will be built into the xv6 file system image.
 UPROGS=\
 	$U/_cat\
 	$U/_echo\
@@ -143,6 +144,10 @@ UPROGS=\
 	$U/_logstress\
 	$U/_forphan\
 	$U/_dorphan\
+	$U/_llmhelper\
+	$U/_cpubound\
+	$U/_iobound\
+	$U/_mixed\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
@@ -154,7 +159,7 @@ clean:
 	*/*.o */*.d */*.asm */*.sym \
 	$K/kernel fs.img \
 	mkfs/mkfs .gdbinit \
-        $U/usys.S \
+	$U/usys.S \
 	$(UPROGS)
 
 # try to generate a unique GDB port
@@ -167,13 +172,27 @@ ifndef CPUS
 CPUS := 3
 endif
 
+# Base QEMU options for running xv6 on RISC-V.
 QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -global virtio-mmio.force-legacy=false
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 
+# Shared directory used by host-side tools (Python agent, analysis scripts).
+# The agent_bridge.py process expects to find:
+#   shared/sched_log.txt   - scheduler snapshots (console output)
+#   shared/llm_advice.txt  - advice written by the agent
+SHARED_DIR := ../shared
+
+# Standard QEMU run: interactive xv6, no logging redirection.
 qemu: check-qemu-version $K/kernel fs.img
 	$(QEMU) $(QEMUOPTS)
+
+# Run xv6 and tee console output to shared/sched_log.txt so the Python agent
+# can consume SCHED_LOG blocks in real time.
+qemu-log: check-qemu-version $K/kernel fs.img
+	mkdir -p $(SHARED_DIR)
+	$(QEMU) $(QEMUOPTS) 2>&1 | tee $(SHARED_DIR)/sched_log.txt
 
 .gdbinit: .gdbinit.tmpl-riscv
 	sed "s/:1234/:$(GDBPORT)/" < $^ > $@
