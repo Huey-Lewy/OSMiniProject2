@@ -1,8 +1,9 @@
 // init: The initial user-level program.
 //
-// This version also starts a background LLM helper process
-// that reads scheduling advice from stdin and injects it into
-// the kernel via the set_llm_advice() syscall.
+// In this version we keep the console shell on stdin/stdout/stderr and
+// do NOT auto-start llmhelper, since having llmhelper read from the
+// console would steal input from the shell. You can run llmhelper
+// manually from the shell once a separate input path is wired up.
 
 #include "kernel/types.h"
 #include "kernel/stat.h"
@@ -14,7 +15,7 @@
 #include "kernel/fcntl.h"
 
 char *argv_sh[]   = { "sh", 0 };
-char *argv_llm[]  = { "llmhelper", 0 };
+char *argv_llm[]  = { "llmhelper", 0 }; // currently unused; kept for future use
 
 int
 main(void)
@@ -28,16 +29,23 @@ main(void)
   dup(0);  // stdout
   dup(0);  // stderr
 
-  // Start the LLM helper once at boot. It runs in the background
-  // and listens for ADVICE:PID=... lines on its stdin.
-  pid = fork();
-  if(pid < 0){
-    printf("init: fork llmhelper failed\n");
-  } else if(pid == 0){
-    exec("llmhelper", argv_llm);
-    printf("init: exec llmhelper failed\n");
-    exit(1);
-  }
+  // NOTE: We intentionally do NOT auto-start llmhelper here.
+  // If llmhelper reads from fd 0 (console), it will compete with
+  // the shell for input and make the system hard to use.
+  // Once a separate advice input path exists, you can re-enable
+  // a background llmhelper and log its PID.
+  //
+  // Example (commented out on purpose):
+  //
+  // pid = fork();
+  // if(pid < 0){
+  //   printf("init: fork llmhelper failed\n");
+  // } else if(pid == 0){
+  //   exec("llmhelper", argv_llm);
+  //   printf("init: exec llmhelper failed\n");
+  //   exit(1);
+  // }
+  // printf("init: started llmhelper (pid=%d)\n", pid);
 
   for(;;){
     printf("init: starting sh\n");
@@ -51,6 +59,9 @@ main(void)
       printf("init: exec sh failed\n");
       exit(1);
     }
+
+    // Parent: record which PID is the shell so we can correlate with logs.
+    printf("init: started sh (pid=%d)\n", pid);
 
     for(;;){
       // this call to wait() returns if the shell exits,

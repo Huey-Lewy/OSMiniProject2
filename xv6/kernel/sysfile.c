@@ -71,11 +71,22 @@ sys_read(void)
   struct file *f;
   int n;
   uint64 p;
+  int fd;
 
   argaddr(1, &p);
   argint(2, &n);
-  if(argfd(0, 0, &f) < 0)
+  if(argfd(0, &fd, &f) < 0)
     return -1;
+
+  // Debug instrumentation: log which process is reading from fd 0.
+  // This helps confirm who is consuming console input.
+  if(fd == 0){
+    struct proc *pcur = myproc();
+    if(pcur != 0){
+      printf("sys_read: pid=%d reading fd=0\n", pcur->pid);
+    }
+  }
+
   return fileread(f, p, n);
 }
 
