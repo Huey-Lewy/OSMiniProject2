@@ -194,6 +194,10 @@ qemu-log: check-qemu-version $K/kernel fs.img
 	mkdir -p $(SHARED_DIR)
 	$(QEMU) $(QEMUOPTS) 2>&1 | tee $(SHARED_DIR)/sched_log.txt
 
+# Run xv6 in no-GUI mode; alias kept for compatibility with older lab docs.
+# This uses qemu-log so the Python agent still sees scheduler logs.
+qemu-nox: qemu-log
+
 .gdbinit: .gdbinit.tmpl-riscv
 	sed "s/:1234/:$(GDBPORT)/" < $^ > $@
 
