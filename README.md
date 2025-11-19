@@ -88,8 +88,8 @@ ollama serve
 
 ```bash
 # 1. Install dependencies
-sudo apt-get update
-sudo apt-get install -y qemu-system-misc python3-venv
+sudo apt update
+sudo apt install -y qemu-system-misc python3-venv
 
 # 2. Clone the repository
 git clone https://github.com/Huey-Lewy/OSMiniProject2
