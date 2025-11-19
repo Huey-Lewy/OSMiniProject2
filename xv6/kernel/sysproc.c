@@ -1,4 +1,3 @@
-// kernel/sysproc.c
 #include "types.h"
 #include "riscv.h"
 #include "defs.h"
@@ -50,14 +49,16 @@ sys_sbrk(void)
 
   if(t == SBRK_EAGER || n < 0) {
     if(growproc(n) < 0) {
-      return (uint64)-1;
+      return -1;
     }
   } else {
-    // Lazy growth.
+    // Lazily allocate memory for this process: increase its memory
+    // size but don't allocate memory. If the processes uses the
+    // memory, vmfault() will allocate it.
     if(addr + n < addr)
-      return (uint64)-1;
+      return -1;
     if(addr + n > TRAPFRAME)
-      return (uint64)-1;
+      return -1;
     myproc()->sz += n;
   }
   return addr;
@@ -72,13 +73,12 @@ sys_pause(void)
   argint(0, &n);
   if(n < 0)
     n = 0;
-
   acquire(&tickslock);
   ticks0 = ticks;
-  while(ticks - ticks0 < (uint)n){
+  while(ticks - ticks0 < n){
     if(killed(myproc())){
       release(&tickslock);
-      return (uint64)-1;
+      return -1;
     }
     sleep(&ticks, &tickslock);
   }
@@ -90,15 +90,18 @@ uint64
 sys_kill(void)
 {
   int pid;
+
   argint(0, &pid);
   return kkill(pid);
 }
 
-// return how many clock tick interrupts have occurred since start.
+// return how many clock tick interrupts have occurred
+// since start.
 uint64
 sys_uptime(void)
 {
   uint xticks;
+
   acquire(&tickslock);
   xticks = ticks;
   release(&tickslock);

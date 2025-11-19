@@ -1,4 +1,3 @@
-// kernel/proc.h
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -96,7 +95,7 @@ struct proc {
   // wait_lock must be held when using this:
   struct proc *parent;         // Parent process
 
-  // private to the process; p->lock need not be held.
+  // these are private to the process, so p->lock need not be held.
   uint64 kstack;               // Virtual address of kernel stack
   uint64 sz;                   // Size of process memory (bytes)
   pagetable_t pagetable;       // User page table
@@ -105,11 +104,4 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
-
-  //// LLM scheduling statistics
-  int   cpu_ticks;             // Total CPU time
-  int   wait_ticks;            // Total time spent waiting (RUNNABLE)
-  int   io_count;              // Number of I/O operations
-  int   recent_cpu;            // Recent CPU usage window
-  uint  arrival_time;          // Creation timestamp (ticks)
 };
