@@ -9,7 +9,7 @@
 #     | python3 ../agent/sched_log_splitter.py
 #
 # This script:
-#   - Reads from sys.stdin (the user's keyboard).
+#   - Reads from sys.stdin (the user's keyboard), one *line* at a time.
 #   - Reads from the named pipe (FIFO) where agent_bridge.py writes
 #     ADVICE:PID=... lines.
 #   - Writes both streams to stdout, which is then piped into QEMU's stdin.
@@ -49,12 +49,13 @@ def main() -> None:
       events = sel.select()
       for key, _ in events:
         if key.fileobj is sys.stdin:
-          # Interactive input from the user; forward bytes as-is.
-          data = sys.stdin.read(1)
-          if data == "":
+          # Interactive input from the user: read a whole line so shell
+          # commands stay intact and don't get interleaved with ADVICE lines.
+          line = sys.stdin.readline()
+          if line == "":
             # stdin closed; nothing more to send to QEMU.
             return
-          sys.stdout.write(data)
+          sys.stdout.write(line)
           sys.stdout.flush()
         elif key.fileobj is fifo_r:
           # Advice lines from the agent. We read whole lines so each

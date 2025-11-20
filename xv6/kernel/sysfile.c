@@ -83,7 +83,7 @@ sys_read(void)
   if(fd == 0){
     struct proc *pcur = myproc();
     if(pcur != 0){
-      printf("sys_read: pid=%d reading fd=0\n", pcur->pid);
+      // Debug: printf("sys_read: pid=%d reading fd=0\n", pcur->pid);
     }
   }
 
