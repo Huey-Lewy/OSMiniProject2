@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# agent_bridge.py
+# agent/agent_bridge.py
 # Reads xv6 scheduler logs, asks an Ollama model for scheduling advice,
 # and writes the chosen PID to shared logs and a FIFO for live injection.
 #
@@ -13,7 +13,10 @@
 #   SCHED_LOG_END
 #
 # where `ticks` is the kernel's global timer tick counter and `state`
-# is the enum value from xv6 (RUNNABLE == 2 on RISC-V).
+# is the enum value from xv6:
+#   SLEEPING == 2
+#   RUNNABLE == 3
+#   RUNNING  == 4
 #
 # Advice format (written by this agent):
 #
@@ -36,13 +39,13 @@ from pathlib import Path
 #### Paths (absolute, CWD-agnostic) ####
 # Resolve everything relative to this script so it works no matter where the process is started from.
 SCRIPT_DIR = Path(__file__).resolve().parent
-ROOT       = SCRIPT_DIR.parent
-SHARED     = ROOT / "shared"
+ROOT = SCRIPT_DIR.parent
+SHARED = ROOT / "shared"
 
 # Shared files used for IPC with xv6 / external tools:
-LOG_FILE      = str(SHARED / "sched_log.txt")       # scheduler logs (written by sched_log_splitter.py)
-ADVICE_FILE   = str(SHARED / "llm_advice.txt")      # append-only record of advice lines
-ADVICE_FIFO   = SHARED / "llm_advice.fifo"          # named pipe used for live advice injection
+LOG_FILE = str(SHARED / "sched_log.txt")      # scheduler logs (written by sched_log_splitter.py)
+ADVICE_FILE = str(SHARED / "llm_advice.txt")  # append-only record of advice lines
+ADVICE_FIFO = SHARED / "llm_advice.fifo"      # named pipe used for live advice injection
 
 # Make sure the shared folder and advice log file exist so other tools can tail them.
 SHARED.mkdir(exist_ok=True)
@@ -50,12 +53,13 @@ Path(ADVICE_FILE).touch(exist_ok=True)
 
 #### LLM and retry configuration ####
 # RETRIES is "extra" attempts; total tries = RETRIES + 1.
-RETRIES        = int(os.getenv("LLM_AGENT_RETRIES", "3"))
+RETRIES = int(os.getenv("LLM_AGENT_RETRIES", "3"))
 RETRY_SLEEP_MS = int(os.getenv("LLM_AGENT_RETRY_SLEEP_MS", "150"))
 
 # LLM generation knobs (passed directly to Ollama).
-LLM_TEMP     = float(os.getenv("LLM_AGENT_TEMPERATURE", "0.0"))
+LLM_TEMP = float(os.getenv("LLM_AGENT_TEMPERATURE", "0.0"))
 LLM_NUM_PRED = int(os.getenv("LLM_AGENT_NUM_PREDICT", "16"))
+
 
 #### Ollama connection (WSL → Windows host) ####
 def _get_wsl_gateway_ip() -> str:
@@ -76,6 +80,7 @@ def _get_wsl_gateway_ip() -> str:
     except Exception:
         return "127.0.0.1"
 
+
 # Base model name (can be overridden via env).
 MODEL = os.getenv("LLM_AGENT_MODEL", "phi3:mini")
 
@@ -87,7 +92,7 @@ if _env_host:
     LLM_BASE = _env_host if _env_host.startswith("http") else f"http://{_env_host}"
 else:
     gateway_ip = _get_wsl_gateway_ip()
-    LLM_BASE   = f"http://{gateway_ip}:11434"
+    LLM_BASE = f"http://{gateway_ip}:11434"
 
 # Final endpoint used for all LLM calls.
 LLM_URL = f"{LLM_BASE}/api/generate"
@@ -97,12 +102,13 @@ INTERVAL = float(os.getenv("LLM_AGENT_INTERVAL", 1.0))
 
 #### Fallback scoring knobs ####
 # Weights used by the deterministic fallback scorer when the LLM fails.
-W_WAIT   = float(os.getenv("LLM_AGENT_W_WAIT",   "1.0"))
-W_IO     = float(os.getenv("LLM_AGENT_W_IO",     "1.0"))
+W_WAIT = float(os.getenv("LLM_AGENT_W_WAIT", "1.0"))
+W_IO = float(os.getenv("LLM_AGENT_W_IO", "1.0"))
 W_RECENT = float(os.getenv("LLM_AGENT_W_RECENT", "1.2"))
 
 # Optional cap on how many runnable processes we include in the LLM prompt.
 MAX_PROCS_IN_PROMPT = int(os.getenv("LLM_AGENT_MAX_PROCS", "64"))
+
 
 #### Data Model ####
 @dataclass
@@ -111,12 +117,12 @@ class ProcessStats:
     Snapshot of per-process scheduling metrics parsed from the log.
 
     Attributes:
-        pid         (int): Process ID.
-        state       (int): Scheduler state (2 == RUNNABLE, 3 == RUNNING on xv6-riscv).
-        cpu_ticks   (int): Total CPU ticks consumed.
-        wait_ticks  (int): Time spent waiting to be scheduled.
-        io_count    (int): Count of I/O-style blocking events.
-        recent_cpu  (int): Recent CPU usage (e.g., ticks in the latest window).
+        pid        (int): Process ID.
+        state      (int): Scheduler state (2=SLEEPING, 3=RUNNABLE, 4=RUNNING in this xv6).
+        cpu_ticks  (int): Total CPU ticks consumed.
+        wait_ticks (int): Time spent waiting to be scheduled.
+        io_count   (int): Count of I/O-style blocking events.
+        recent_cpu (int): Recent CPU usage (e.g., ticks in the latest window).
     """
     pid: int
     state: int
@@ -124,6 +130,7 @@ class ProcessStats:
     wait_ticks: int
     io_count: int
     recent_cpu: int
+
 
 #### Agent ####
 class LLMSchedulerAgent:
@@ -243,7 +250,7 @@ class LLMSchedulerAgent:
                 return None
 
             print(f"[agent] Parsed {len(processes)} processes from scheduler log @TS={log_ts}")
-            return (log_ts, processes)
+            return log_ts, processes
 
         except FileNotFoundError:
             print("[agent] Waiting for sched_log.txt ...")
@@ -256,12 +263,18 @@ class LLMSchedulerAgent:
         """
         Filter to only "runnable" processes, skipping kernel/init/system PIDs.
 
-        For xv6-riscv:
-            RUNNABLE == 2
-            RUNNING  == 3 (we typically only consider 2 here)
-            pid   > 2   → skip init / early system processes
+        For this xv6-riscv port:
+            SLEEPING == 2
+            RUNNABLE == 3
+            RUNNING  == 4
+        We also skip PIDs <= 3 to avoid init/system and the llmhelper process itself.
         """
-        return [p for p in procs if p.state == 2 and p.pid > 2]
+        return [
+            p
+            for p in procs
+            if p.state == 3   # RUNNABLE
+            and p.pid > 3     # skip 1, 2, and llmhelper (pid 3)
+        ]
 
     def _make_prompt(self, procs: List[ProcessStats]) -> Optional[str]:
         """
@@ -286,7 +299,10 @@ class LLMSchedulerAgent:
             "1) Respond with ONLY the chosen PID in the exact format: PID:<number>",
             "2) Do NOT explain. Do NOT refuse. Do NOT add any other text.",
             "3) Choose a PID that exists in the list below.",
-            "4) Optimize for: lowest WAIT, higher IO, avoid starvation; balance CPU usage.",
+            "4) Prefer processes with HIGHER WAIT (they have waited longer),",
+            "   HIGHER IO (more interactive / I/O-bound),",
+            "   and LOWER RECENT CPU (to avoid hogs and balance CPU).",
+            "   Avoid starvation: if any process has much larger WAIT, it should be preferred.",
             "",
             "Processes:",
         ]
@@ -370,7 +386,7 @@ class LLMSchedulerAgent:
         def score(p: ProcessStats) -> Tuple[float, int]:
             s = (W_WAIT * p.wait_ticks) + (W_IO * p.io_count) - (W_RECENT * p.recent_cpu)
             jitter = (hash(p.pid) % 7) * 0.01
-            return (s + jitter, -p.cpu_ticks)
+            return s + jitter, -p.cpu_ticks
 
         best = max(ready, key=score)
         print(f"[agent] Fallback chose PID={best.pid}")
@@ -466,16 +482,17 @@ class LLMSchedulerAgent:
             if parsed:
                 log_ts, processes = parsed
 
+                # Avoid emitting duplicate advice for the same timestamp.
                 if self._last_advised_ts == log_ts:
                     time.sleep(self.interval)
                     continue
 
                 runnable = self._runnable(processes)
-
-                if len(runnable) == 0:
+                if not runnable:
                     time.sleep(self.interval)
                     continue
 
+                # If there's only one RUNNABLE candidate, just pick it.
                 if len(runnable) == 1:
                     self._write(runnable[0].pid, log_ts)
                     time.sleep(self.interval)
