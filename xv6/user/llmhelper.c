@@ -2,8 +2,9 @@
 // Small helper that reads LLM scheduling advice from stdin and
 // injects it into the kernel via set_llm_advice(pid).
 //
-// In the current design, init routes only advice lines into llmhelper's
-// stdin via a pipe. Each line is expected to have the form:
+// In the intended design, init routes only advice lines into
+// llmhelper's stdin via a dedicated pipe, *not* the interactive
+// console. Each line is expected to have the form:
 //
 //   ADVICE:PID=<n> TS=<ts> V=1
 //
