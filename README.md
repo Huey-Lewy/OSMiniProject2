@@ -174,11 +174,66 @@ At runtime:
 ## System Flow
 
 ```text
-Ollama (Windows 11)
-    ⇅  HTTP (Ollama API)
-agent_bridge.py (WSL)
-    ⇅  shared/sched_log.txt + shared/llm_advice.txt
-xv6 kernel → llmhelper → scheduler
+          ┌───────────────────────────── Windows 11 ─────────────────────────────┐
+          │                                                                      │
+          │    Ollama server                                                     │
+          │    (phi3:mini, HTTP API)                                             │
+          │                                                                      │
+          └───────────────────────↑──────────────────────────────────────────────┘
+                                  │ HTTP (LLM calls)
+                                  │
+       ┌──────────────────────────┴─────────────────────────────┐
+       │                        WSL / Ubuntu                    │
+       │                                                        │
+       │  agent_bridge.py                                       │
+       │    ├─ tails shared/sched_log.txt  (scheduler logs)     │
+       │    ├─ calls Ollama over HTTP                           │
+       │    ├─ writes ADVICE:PID=... to:                        │
+       │    │     • shared/llm_advice.txt  (log)                │
+       │    │     • shared/llm_advice.fifo  (live pipe)         │
+       │                                                        │
+       │  console_mux.py                                        │
+       │    ├─ reads:                                           │
+       │    │     • your keyboard (stdin)                       │
+       │    │     • shared/llm_advice.fifo                      │
+       │    └─ merges both → QEMU stdin                         │
+       │                                                        │
+       │  qemu-system-riscv64 (xv6)                             │
+       │    └─ stdout/stderr → sched_log_splitter.py            │
+       │                                                        │
+       │  sched_log_splitter.py                                 │
+       │    ├─ reads QEMU output                                │
+       │    ├─ strips SCHED_LOG_* blocks → shared/sched_log.txt │
+       │    └─ forwards everything else → your terminal         │
+       │                                                        │
+       └──────────────────────────↓─────────────────────────────┘
+                                  │
+                                  │ console (stdin/stdout) over QEMU
+                                  ↓
+                  ┌─────────────────────────────────────────────┐
+                  │                 xv6 kernel                  │
+                  │                                             │
+                  │  init (input router)                        │
+                  │    ├─ only process that reads /dev/console  │
+                  │    ├─ echoes what you type back to console  │
+                  │    ├─ if line starts with "ADVICE:PID=":    │
+                  │    │     → send to llmhelper via pipe       │
+                  │    └─ else:                                 │
+                  │          → send to sh via pipe              │
+                  │                                             │
+                  │  sh (shell)                                 │
+                  │    └─ reads commands from its pipe          │
+                  │       (still “feels” interactive to you)    │
+                  │                                             │
+                  │  llmhelper                                  │
+                  │    └─ reads ADVICE:PID=... lines from pipe  │
+                  │       → calls set_llm_advice(pid) syscall   │
+                  │                                             │
+                  │  scheduler                                  │
+                  │    ├─ logs SCHED_LOG_* snapshots            │
+                  │    ├─ consults latest LLM advice            │
+                  │    └─ biases RUNNABLE selection accordingly │
+                  └─────────────────────────────────────────────┘
 ```
 
 ## Offline Analysis
