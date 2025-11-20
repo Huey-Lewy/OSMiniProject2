@@ -2,7 +2,9 @@
 // Small helper that reads LLM scheduling advice from stdin and
 // injects it into the kernel via set_llm_advice(pid).
 //
-// Expected input lines (from shared/llm_advice.txt via host piping):
+// In the current design, init routes only advice lines into llmhelper's
+// stdin via a pipe. Each line is expected to have the form:
+//
 //   ADVICE:PID=<n> TS=<ts> V=1
 //
 // Only the PID field matters; everything else is ignored.
@@ -23,9 +25,10 @@ handle_line(char *line)
 
   const char *prefix = "ADVICE:PID=";
   int plen = 11; // strlen("ADVICE:PID=")
+  int i;
 
   // Require the exact prefix.
-  for(int i = 0; i < plen; i++) {
+  for(i = 0; i < plen; i++) {
     if(line[i] != prefix[i])
       return;
   }
@@ -48,6 +51,9 @@ handle_line(char *line)
   // Best-effort: ignore errors, but print a hint on failure.
   if(set_llm_advice(pid) < 0) {
     printf("llmhelper: set_llm_advice(%d) failed\n", pid);
+  } else {
+    // Lightweight debug so we can see when advice is applied.
+    printf("llmhelper: applied advice for pid %d\n", pid);
   }
 }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# agent/test_agent.py
+# testing/test_agent.py
 # Simple tester for the LLM Scheduler Agent.
 # Runs local tests for log parsing, prompt formatting, and LLM connectivity.
 
@@ -7,7 +7,7 @@ import os
 import re
 import time
 import tempfile
-from agent_bridge import LLMSchedulerAgent, ProcessStats
+from agent.agent_bridge import LLMSchedulerAgent, ProcessStats  # <-- updated import
 
 #### Sample Log Generator ####
 def _write_sample_log(path: str):

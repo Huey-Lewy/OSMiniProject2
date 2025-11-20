@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# agent/test_scheduling.py
+# testing/test_scheduling.py
 # LLM-only scheduler simulator:
 # - emits SCHED_LOG blocks at each decision boundary
 # - waits for matching ADVICE:PID=<n> TS=<ts> V=1 from agent_bridge.py

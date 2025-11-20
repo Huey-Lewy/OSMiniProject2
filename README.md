@@ -120,7 +120,12 @@ ollama serve
 # From the project root
 cd agent
 
-# Start the LLM scheduler bridge
+# Make sure the shared dir and FIFO exist
+mkdir -p shared
+[ -p shared/llm_advice.fifo ] || mkfifo shared/llm_advice.fifo
+
+# Start the agent
+cd agent
 python3 agent_bridge.py
 ```
 
@@ -136,8 +141,23 @@ The agent will:
 # From the project root
 cd xv6
 
-# Build xv6 and launch QEMU with a single CPU
-make qemu-nox CPUS=1
+# 1) Build kernel + filesystem image
+make clean
+make fs.img kernel
+
+# 2) Run QEMU with the input/output pipeline
+python3 ../agent/console_mux.py ../shared/llm_advice.fifo \
+  | qemu-system-riscv64 \
+      -machine virt \
+      -bios none \
+      -kernel kernel/kernel \
+      -m 128M \
+      -smp 1 \
+      -nographic \
+      -global virtio-mmio.force-legacy=false \
+      -drive file=fs.img,if=none,format=raw,id=x0 \
+      -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+  | python3 ../agent/sched_log_splitter.py
 ```
 
 At runtime:

@@ -65,6 +65,7 @@ xv6/TAGS
 shared/*.txt
 !shared/sched_log.txt
 !shared/llm_advice.txt
+shared/llm_advice.fifo
 shared/*.log
 
 #### Agent Python Environment ####

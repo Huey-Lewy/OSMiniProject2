@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# agent/test_xv6.py
+# testing/test_xv6.py
 # Validates scheduling-advisor logic before integrating with xv6.
 # Appends well-formed SCHED_LOG blocks to shared/sched_log.txt,
 # waits for agent_bridge.py to write advice lines to shared/llm_advice.txt,
