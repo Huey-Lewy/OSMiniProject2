@@ -7,9 +7,7 @@
 #include "defs.h"
 
 struct cpu cpus[NCPU];
-
 struct proc proc[NPROC];
-
 struct proc *initproc;
 
 int nextpid = 1;
@@ -44,7 +42,7 @@ void
 proc_mapstacks(pagetable_t kpgtbl)
 {
   struct proc *p;
-  
+
   for(p = proc; p < &proc[NPROC]; p++) {
     char *pa = kalloc();
     if(pa == 0)
@@ -59,10 +57,11 @@ void
 procinit(void)
 {
   struct proc *p;
-  
+
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
   initlock(&llm_lock, "llm_advice");
+
   for(p = proc; p < &proc[NPROC]; p++) {
     initlock(&p->lock, "proc");
     p->state = UNUSED;
@@ -109,7 +108,7 @@ int
 allocpid(void)
 {
   int pid;
-  
+
   acquire(&pid_lock);
   pid = nextpid;
   nextpid = nextpid + 1;
@@ -256,10 +255,13 @@ userinit(void)
     panic("userinit: allocproc");
   initproc = p;
 
+  // Working directory: root.
   p->cwd = namei("/");
 
+  // Mark runnable; forkret() will run fsinit + kexec("/init").
   p->state = RUNNABLE;
 
+  // Done with p->lock from allocproc().
   release(&p->lock);
 }
 
@@ -273,6 +275,7 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    // Avoid growing into the trapframe mapping.
     if(sz + n > TRAPFRAME) {
       return -1;
     }
@@ -384,7 +387,7 @@ kexit(int status)
 
   // Parent might be sleeping in wait().
   wakeup(p->parent);
-  
+
   acquire(&p->lock);
 
   p->xstate = status;
@@ -440,7 +443,7 @@ kwait(uint64 addr)
       release(&wait_lock);
       return -1;
     }
-    
+
     // Wait for a child to exit.
     sleep(p, &wait_lock);  //DOC: wait-sleep
   }
@@ -615,7 +618,7 @@ void
 sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
-  
+
   // Must acquire p->lock in order to
   // change p->state and then call sched.
   // Once we hold p->lock, we can be
@@ -694,7 +697,7 @@ int
 killed(struct proc *p)
 {
   int k;
-  
+
   acquire(&p->lock);
   k = p->killed;
   release(&p->lock);

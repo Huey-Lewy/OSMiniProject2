@@ -119,6 +119,10 @@ ollama serve
 ```bash
 # From the project root
 
+# Clear any existing logs from sched_log.txt and llm_advice.txt
+: > shared/sched_log.txt
+: > shared/llm_advice.txt
+
 # Make sure the shared dir and FIFO exist at the ROOT level
 mkdir -p shared
 [ -p shared/llm_advice.fifo ] || mkfifo shared/llm_advice.fifo
@@ -142,7 +146,7 @@ cd xv6
 
 # (Re)build kernel + filesystem image
 make clean
-make fs.img kernel/kernel
+make fs.img kernel/kernel CPUS=1
 
 # Run QEMU with the input/output pipeline:
 #   console_mux → QEMU stdin

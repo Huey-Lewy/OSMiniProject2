@@ -24,8 +24,9 @@ argfd(int n, int *pfd, struct file **pf)
   int fd;
   struct file *f;
 
+  // argint() is void-returning in this tree.
   argint(n, &fd);
-  if(fd < 0 || fd >= NOFILE || (f=myproc()->ofile[fd]) == 0)
+  if(fd < 0 || fd >= NOFILE || (f = myproc()->ofile[fd]) == 0)
     return -1;
   if(pfd)
     *pfd = fd;
@@ -59,7 +60,7 @@ sys_dup(void)
 
   if(argfd(0, 0, &f) < 0)
     return -1;
-  if((fd=fdalloc(f)) < 0)
+  if((fd = fdalloc(f)) < 0)
     return -1;
   filedup(f);
   return fd;
@@ -96,7 +97,7 @@ sys_write(void)
   struct file *f;
   int n;
   uint64 p;
-  
+
   argaddr(1, &p);
   argint(2, &n);
   if(argfd(0, 0, &f) < 0)
@@ -187,7 +188,7 @@ isdirempty(struct inode *dp)
   int off;
   struct dirent de;
 
-  for(off=2*sizeof(de); off<dp->size; off+=sizeof(de)){
+  for(off = 2*sizeof(de); off < dp->size; off += sizeof(de)){
     if(readi(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
       panic("isdirempty: readi");
     if(de.inum != 0)
@@ -319,10 +320,9 @@ sys_open(void)
   int fd, omode;
   struct file *f;
   struct inode *ip;
-  int n;
 
   argint(1, &omode);
-  if((n = argstr(0, path, MAXPATH)) < 0)
+  if(argstr(0, path, MAXPATH) < 0)
     return -1;
 
   begin_op();
@@ -407,7 +407,7 @@ sys_mknod(void)
   begin_op();
   argint(1, &major);
   argint(2, &minor);
-  if((argstr(0, path, MAXPATH)) < 0 ||
+  if(argstr(0, path, MAXPATH) < 0 ||
      (ip = create(path, T_DEVICE, major, minor)) == 0){
     end_op();
     return -1;
@@ -423,7 +423,7 @@ sys_chdir(void)
   char path[MAXPATH];
   struct inode *ip;
   struct proc *p = myproc();
-  
+
   begin_op();
   if(argstr(0, path, MAXPATH) < 0 || (ip = namei(path)) == 0){
     end_op();
@@ -450,15 +450,15 @@ sys_exec(void)
   uint64 uargv, uarg;
 
   argaddr(1, &uargv);
-  if(argstr(0, path, MAXPATH) < 0) {
+  if(argstr(0, path, MAXPATH) < 0)
     return -1;
-  }
+
   memset(argv, 0, sizeof(argv));
-  for(i=0;; i++){
+  for(i = 0;; i++){
     if(i >= NELEM(argv)){
       goto bad;
     }
-    if(fetchaddr(uargv+sizeof(uint64)*i, (uint64*)&uarg) < 0){
+    if(fetchaddr(uargv + sizeof(uint64)*i, (uint64*)&uarg) < 0){
       goto bad;
     }
     if(uarg == 0){
@@ -472,6 +472,7 @@ sys_exec(void)
       goto bad;
   }
 
+  // Use kernel-side exec helper.
   int ret = kexec(path, argv);
 
   for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
@@ -505,7 +506,7 @@ sys_pipe(void)
     return -1;
   }
   if(copyout(p->pagetable, fdarray, (char*)&fd0, sizeof(fd0)) < 0 ||
-     copyout(p->pagetable, fdarray+sizeof(fd0), (char *)&fd1, sizeof(fd1)) < 0){
+     copyout(p->pagetable, fdarray + sizeof(fd0), (char *)&fd1, sizeof(fd1)) < 0){
     p->ofile[fd0] = 0;
     p->ofile[fd1] = 0;
     fileclose(rf);
