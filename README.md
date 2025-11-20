@@ -118,6 +118,8 @@ ollama serve
 
 ```bash
 # From the project root
+
+# Make sure the shared dir and FIFO exist at the ROOT level
 mkdir -p shared
 [ -p shared/llm_advice.fifo ] || mkfifo shared/llm_advice.fifo
 
@@ -138,11 +140,13 @@ The agent will:
 # From the project root
 cd xv6
 
-# 1) Build kernel + filesystem image
+# (Re)build kernel + filesystem image
 make clean
-make fs.img kernel
+make fs.img kernel/kernel
 
-# 2) Run QEMU with the input/output pipeline
+# Run QEMU with the input/output pipeline:
+#   console_mux → QEMU stdin
+#   QEMU stdout/stderr → sched_log_splitter
 python3 ../agent/console_mux.py ../shared/llm_advice.fifo \
   | qemu-system-riscv64 \
       -machine virt \
