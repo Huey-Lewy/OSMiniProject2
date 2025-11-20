@@ -118,13 +118,10 @@ ollama serve
 
 ```bash
 # From the project root
-cd agent
-
-# Make sure the shared dir and FIFO exist
 mkdir -p shared
 [ -p shared/llm_advice.fifo ] || mkfifo shared/llm_advice.fifo
 
-# Start the agent
+# Start the agent from the agent/ directory
 cd agent
 python3 agent_bridge.py
 ```
