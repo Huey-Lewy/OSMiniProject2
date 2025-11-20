@@ -67,6 +67,7 @@ shared/*.txt
 !shared/llm_advice.txt
 shared/llm_advice.fifo
 shared/*.log
+shared/scheduling_analysis.png
 
 #### Agent Python Environment ####
 agent/__pycache__/
