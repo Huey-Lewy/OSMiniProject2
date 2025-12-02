@@ -4,13 +4,14 @@
 // Each worker:
 //   - prints "I/O op X/Y" lines
 //   - calls pause() between operations, spending most time blocked
+//   - does a small amount of CPU work after each wakeup
 //
 // Usage:
 //   iobound [total_iters] [sleep_ticks] [workers]
 //
 // Example:
-//   iobound            # default: total_iters=400, sleep=5, workers=4
-//   iobound 800 3 6    # 6 workers, 800 total ops (≈133 each), sleep 3 ticks
+//   iobound            // default: total_iters=1200, sleep=10, workers=4
+//   iobound 800 3 6    // 6 workers, 800 total ops (≈133 each), sleep 3 ticks
 
 #include "kernel/types.h"
 #include "kernel/stat.h"
@@ -20,8 +21,9 @@ int
 main(int argc, char *argv[])
 {
   // Total I/O operations across *all* workers.
-  int total_iters = 400;  // short but representative
-  int sleep_ticks = 5;    // pause between ops (I/O-like blocking)
+  // With the defaults and ticks ≈10ms, each worker sleeps for about 3000 ticks (≈30 seconds).
+  int total_iters = 1200;
+  int sleep_ticks = 10;   // pause between ops (I/O-like blocking)
   int workers     = 4;    // parent + children (total worker processes)
 
   if(argc >= 2){
@@ -80,6 +82,13 @@ main(int argc, char *argv[])
     // Pause to simulate blocking on I/O; this hits sys_pause(), which you instrument for io_count.
     if(sleep_ticks > 0)
       pause(sleep_ticks);
+
+    // Small CPU burst after each wakeup, so there is some computation
+    // but the process still spends most of its time blocked.
+    volatile int spin = 0;
+    for(int j = 0; j < 1000; j++){
+      spin += (j ^ mypid);
+    }
   }
 
   printf("iobound(pid=%d): finished\n", mypid);

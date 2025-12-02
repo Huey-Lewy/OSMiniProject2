@@ -20,14 +20,14 @@
 //
 // Examples:
 //   cpubound
-//     # default: total_iters=200000000, workers=4, chunks=1 (no pause)
+//     // default: total_iters=100000000, workers=4, chunks=1 (no pause)
 //
 //   cpubound 80000000 8
-//     # 8 workers, 80M total iterations (~10M each), single chunk
+//     // 8 workers, 80M total iterations (~10M each), single chunk
 //
 //   cpubound 40000000 4 20 2
-//     # 4 workers, 40M total, each worker does 20 chunks and pauses
-//     # for 2 ticks between chunks (lots of scheduler/LLM decisions).
+//     // 4 workers, 40M total, each worker does 20 chunks and pauses
+//     // for 2 ticks between chunks (lots of scheduler/LLM decisions).
 
 #include "kernel/types.h"
 #include "kernel/stat.h"
@@ -37,7 +37,8 @@ int
 main(int argc, char *argv[])
 {
   // Total iterations across *all* workers.
-  int total_iters = 200000000;  // 2e8: heavy but okay for testing
+  // This default aims for around 30 seconds on a typical xv6/qemu run.
+  int total_iters = 100000000;
   int workers     = 4;          // parent + children (total worker procs)
   int chunks      = 1;          // per-worker chunks (1 => no extra chunking)
   int sleep_ticks = 0;          // pause() between chunks if >0 and chunks>1
@@ -123,7 +124,7 @@ main(int argc, char *argv[])
     done += this_chunk;
     chunk++;
 
-    // Optional pause between chunks to give scheduler/LLM more chances
+    // Optional pause between chunks to give the scheduler/LLM more chances
     // to run other processes. This will also contribute to io_count if
     // you instrument pause() that way, but is useful for testing.
     if(sleep_ticks > 0 && chunks > 1 && done < local_iters){
