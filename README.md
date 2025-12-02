@@ -156,7 +156,7 @@ python3 ../agent/console_mux.py ../shared/llm_advice.fifo \
       -machine virt \
       -bios none \
       -kernel kernel/kernel \
-      -m 128M \
+      -m 256M \
       -smp 1 \
       -nographic \
       -global virtio-mmio.force-legacy=false \
