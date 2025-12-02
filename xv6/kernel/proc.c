@@ -1,4 +1,3 @@
-// kernel/proc.c
 #include "types.h"
 #include "param.h"
 #include "memlayout.h"
@@ -12,36 +11,38 @@ struct proc proc[NPROC];
 struct proc *initproc;
 
 int nextpid = 1;
+struct spinlock pid_lock;
 
 extern void forkret(void);
 static void freeproc(struct proc *p);
 
-//// LLM advisory global state
-static int  llm_recommended_pid  = -1;
-static int  llm_advice_valid     = 0;
-static uint llm_advice_timestamp = 0;
-
-struct spinlock advice_lock;
-
-#define LOG_INTERVAL   100   //// Log every 100 ticks (~1s)
-#define ADVICE_TIMEOUT 200   //// Advice expires after 200 ticks (~2s)
-
 extern char trampoline[]; // trampoline.S
 
-// helps ensure that wakeups of wait()ing
+// helps make sure that wakeups of wait()ing
 // parents are not lost. helps obey the
 // memory model when using p->parent.
 // must be acquired before any p->lock.
-struct spinlock pid_lock;
 struct spinlock wait_lock;
 
+// LLM advice state used by the scheduler. Advice is injected
+// from user space via the set_llm_advice() syscall.
+struct spinlock llm_lock;
+int  llm_recommended_pid  = -1;
+int  llm_advice_valid     = 0;
+uint llm_advice_timestamp = 0;
+
+// Advice expires after this many ticks to prevent the scheduler
+// from following stale decisions.
+#define ADVICE_TIMEOUT_TICKS 200
+
 // Allocate a page for each process's kernel stack.
-// Map it high in memory, followed by an invalid guard page.
+// Map it high in memory, followed by an invalid
+// guard page.
 void
 proc_mapstacks(pagetable_t kpgtbl)
 {
   struct proc *p;
-  
+
   for(p = proc; p < &proc[NPROC]; p++) {
     char *pa = kalloc();
     if(pa == 0)
@@ -56,21 +57,19 @@ void
 procinit(void)
 {
   struct proc *p;
-  
+
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
-  initlock(&advice_lock, "advice_lock");
+  initlock(&llm_lock, "llm_advice");
+
   for(p = proc; p < &proc[NPROC]; p++) {
     initlock(&p->lock, "proc");
     p->state = UNUSED;
     p->kstack = KSTACK((int) (p - proc));
-
-    //// initialize LLM scheduling stats
-    p->cpu_ticks = 0;
+    p->cpu_ticks  = 0;
     p->wait_ticks = 0;
-    p->io_count = 0;
+    p->io_count   = 0;
     p->recent_cpu = 0;
-    p->arrival_time = 0;
   }
 }
 
@@ -78,7 +77,7 @@ procinit(void)
 // to prevent race with process being moved
 // to a different CPU.
 int
-cpuid()
+cpuid(void)
 {
   int id = r_tp();
   return id;
@@ -106,39 +105,16 @@ myproc(void)
 }
 
 int
-allocpid()
+allocpid(void)
 {
   int pid;
+
   acquire(&pid_lock);
-  pid = nextpid++;
+  pid = nextpid;
+  nextpid = nextpid + 1;
   release(&pid_lock);
+
   return pid;
-}
-
-// #### Scheduler log output for external agent ####
-// Logs the scheduling-related state of all processes to the console.
-static void
-log_scheduling_state(void)
-{
-  struct proc *p;
-
-  printf("SCHED_LOG_START\n");
-  printf("TIMESTAMP:%u\n", ticks);
-
-  for(p = proc; p < &proc[NPROC]; p++) {
-    if(p->state == UNUSED)
-      continue;
-
-    printf("PROC:%d,%d,%d,%d,%d,%d\n",
-           p->pid,
-           p->state,
-           p->cpu_ticks,
-           p->wait_ticks,
-           p->io_count,
-           p->recent_cpu);
-  }
-
-  printf("SCHED_LOG_END\n");
 }
 
 // Look in the process table for an UNUSED proc.
@@ -163,6 +139,13 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+
+  // Reset scheduler statistics for a fresh process.
+  p->cpu_ticks  = 0;
+  p->wait_ticks = 0;
+  p->io_count   = 0;
+  p->recent_cpu = 0;
+  p->sz = 0;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -197,32 +180,22 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
-
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
-
-  // reset address space/accounting
   p->sz = 0;
-
-  // reset identification/relations
   p->pid = 0;
   p->parent = 0;
-
-  // reset sleep/kill/exit state
+  p->name[0] = 0;
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
 
-  // reset name
-  p->name[0] = 0;
-
-  // reset LLM scheduling statistics
-  p->cpu_ticks    = 0;
-  p->wait_ticks   = 0;
-  p->io_count     = 0;
-  p->recent_cpu   = 0;
-  p->arrival_time = 0;
+  // Reset scheduler statistics for this slot.
+  p->cpu_ticks  = 0;
+  p->wait_ticks = 0;
+  p->io_count   = 0;
+  p->recent_cpu = 0;
 
   p->state = UNUSED;
 }
@@ -278,15 +251,17 @@ userinit(void)
   struct proc *p;
 
   p = allocproc();
+  if(p == 0)
+    panic("userinit: allocproc");
   initproc = p;
 
+  // Working directory: root.
   p->cwd = namei("/");
 
+  // Mark runnable; forkret() will run fsinit + kexec("/init").
   p->state = RUNNABLE;
 
-  //// record creation time for stats
-  p->arrival_time = ticks;
-
+  // Done with p->lock from allocproc().
   release(&p->lock);
 }
 
@@ -300,6 +275,7 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    // Avoid growing into the trapframe mapping.
     if(sz + n > TRAPFRAME) {
       return -1;
     }
@@ -359,10 +335,6 @@ kfork(void)
 
   acquire(&np->lock);
   np->state = RUNNABLE;
-
-  //// record creation time for stats
-  np->arrival_time = ticks;
-
   release(&np->lock);
 
   return pid;
@@ -477,108 +449,92 @@ kwait(uint64 addr)
   }
 }
 
-// Per-CPU process scheduler with LLM advisory logic
+// Per-CPU process scheduler.
+// Each CPU calls scheduler() after setting itself up.
+// Scheduler never returns.  It loops, doing:
+//  - choose a process to run (using LLM advice when available);
+//  - swtch to start running that process;
+//  - eventually that process transfers control
+//    via swtch back to the scheduler.
 void
 scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
-  static int tick_count = 0;
-  c->proc = 0;
 
-  for(;;) {
+  c->proc = 0;
+  for(;;){
+    // The most recent process to run may have had interrupts
+    // turned off; enable them to avoid a deadlock if all
+    // processes are waiting. Then turn them back off
+    // to avoid a possible race between an interrupt
+    // and wfi.
     intr_on();
+    intr_off();
 
     int found = 0;
-    tick_count++;
 
-    // Update waiting statistics
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if(p->state == RUNNABLE)
-        p->wait_ticks++;
-      release(&p->lock);
+    // Snapshot any current LLM advice under its own lock.
+    int advised_pid = -1;
+    int have_advice = 0;
+
+    acquire(&llm_lock);
+    if(llm_advice_valid &&
+       (ticks - llm_advice_timestamp) < ADVICE_TIMEOUT_TICKS){
+      advised_pid = llm_recommended_pid;
+      have_advice = 1;
     }
+    release(&llm_lock);
 
-    // Periodic log for the agent
-    if(tick_count % LOG_INTERVAL == 0)
-      log_scheduling_state();
-
-    struct proc *selected = 0;
-
-    // Snapshot advice under lock
-    acquire(&advice_lock);
-    int advised_pid =
-      (llm_advice_valid && (ticks - llm_advice_timestamp) < ADVICE_TIMEOUT)
-      ? llm_recommended_pid : -1;
-    release(&advice_lock);
-
-    // Try advised PID first (keep lock if selected)
-    if(advised_pid != -1) {
+    // First try to honor LLM advice, if it refers to a RUNNABLE process.
+    if(have_advice){
       for(p = proc; p < &proc[NPROC]; p++) {
         acquire(&p->lock);
         if(p->state == RUNNABLE && p->pid == advised_pid) {
-          selected = p;
-          acquire(&advice_lock);
-          llm_advice_valid = 0;  // consume advice
-          release(&advice_lock);
-          break;                 // keep selected->lock held
-        }
-        release(&p->lock);
-      }
-    }
+          p->state = RUNNING;
+          c->proc = p;
 
-    // Fallback: first RUNNABLE (keep lock if selected)
-    if(selected == 0) {
-      for(p = proc; p < &proc[NPROC]; p++) {
-        acquire(&p->lock);
-        if(p->state == RUNNABLE) {
-          selected = p;          // keep selected->lock held
+          // Mark this advice as used so the agent can provide fresh input.
+          acquire(&llm_lock);
+          llm_advice_valid = 0;
+          release(&llm_lock);
+
+          swtch(&c->context, &p->context);
+
+          // Process is done running for now.
+          // It should have changed its p->state before coming back.
+          c->proc = 0;
+          found = 1;
+          release(&p->lock);
           break;
         }
         release(&p->lock);
       }
     }
 
-    if(selected != 0) {
-      selected->state = RUNNING;
-      c->proc = selected;
+    // If no advised process ran, fall back to simple round-robin.
+    if(!found){
+      for(p = proc; p < &proc[NPROC]; p++) {
+        acquire(&p->lock);
+        if(p->state == RUNNABLE) {
+          p->state = RUNNING;
+          c->proc = p;
+          swtch(&c->context, &p->context);
 
-      // Update scheduling stats
-      selected->cpu_ticks++;
-      selected->recent_cpu++;
-
-      swtch(&c->context, &selected->context);
-
-      // After context switch returns
-      c->proc = 0;
-      found = 1;
-      release(&selected->lock);
+          // Process is done running for now.
+          // It should have changed its p->state before coming back.
+          c->proc = 0;
+          found = 1;
+        }
+        release(&p->lock);
+      }
     }
 
-    if(found == 0)
+    if(found == 0) {
+      // nothing to run; stop running on this core until an interrupt.
       asm volatile("wfi");
+    }
   }
-}
-
-// #### System call: set_llm_advice(pid) ####
-uint64
-sys_set_llm_advice(void)
-{
-  int pid;
-
-  // argint() writes into pid; it does not return a status in this tree.
-  argint(0, &pid);
-  if (pid <= 0)
-    return (uint64)-1;
-
-  acquire(&advice_lock);
-  llm_recommended_pid  = pid;
-  llm_advice_valid     = 1;
-  llm_advice_timestamp = ticks;
-  release(&advice_lock);
-
-  return 0;
 }
 
 // Switch to scheduler.  Must hold only p->lock
@@ -638,7 +594,7 @@ forkret(void)
     fsinit(ROOTDEV);
 
     first = 0;
-    // ensure other cores see first=0.
+    // make other cores see first=0.
     __sync_synchronize();
 
     // We can invoke kexec() now that file system is initialized.
@@ -776,6 +732,84 @@ either_copyin(void *dst, int user_src, uint64 src, uint64 len)
     memmove(dst, (char*)src, len);
     return 0;
   }
+}
+
+// Update per-process scheduling statistics on each timer tick.
+// Called from clockintr() on CPU 0. Assumes a single-CPU
+// configuration (CPUS=1) for this project.
+void
+update_sched_stats(void)
+{
+  struct proc *p;
+
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state == RUNNABLE) {
+      // Runnable but not running: waiting for CPU.
+      p->wait_ticks++;
+    } else if(p->state == RUNNING) {
+      // Currently running process accrues CPU time.
+      p->cpu_ticks++;
+      p->recent_cpu++;
+    }
+    // io_count is updated elsewhere (for example, in blocking syscalls).
+    release(&p->lock);
+  }
+}
+
+// Emit a structured snapshot of the scheduler state.
+// The log format is consumed by the Python agent:
+//
+//   SCHED_LOG_START
+//   TIMESTAMP:<ticks>
+//   PROC:<pid>,<state>,<cpu_ticks>,<wait_ticks>,<io_count>,<recent_cpu>
+//   ...
+//   SCHED_LOG_END
+//
+void
+log_scheduling_state(void)
+{
+  struct proc *p;
+
+  // Local snapshot to avoid holding locks while printing.
+  struct {
+    int pid;
+    int state;
+    int cpu_ticks;
+    int wait_ticks;
+    int io_count;
+    int recent_cpu;
+  } snap[NPROC];
+  int count = 0;
+
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state != UNUSED) {
+      if(count < NPROC) {
+        snap[count].pid         = p->pid;
+        snap[count].state       = p->state;
+        snap[count].cpu_ticks   = p->cpu_ticks;
+        snap[count].wait_ticks  = p->wait_ticks;
+        snap[count].io_count    = p->io_count;
+        snap[count].recent_cpu  = p->recent_cpu;
+        count++;
+      }
+    }
+    release(&p->lock);
+  }
+
+  printf("SCHED_LOG_START\n");
+  printf("TIMESTAMP:%u\n", ticks);
+  for(int i = 0; i < count; i++) {
+    printf("PROC:%d,%d,%d,%d,%d,%d\n",
+           snap[i].pid,
+           snap[i].state,
+           snap[i].cpu_ticks,
+           snap[i].wait_ticks,
+           snap[i].io_count,
+           snap[i].recent_cpu);
+  }
+  printf("SCHED_LOG_END\n");
 }
 
 // Print a process listing to console.  For debugging.

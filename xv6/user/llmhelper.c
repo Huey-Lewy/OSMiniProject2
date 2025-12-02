@@ -1,98 +1,113 @@
 // user/llmhelper.c
-// Reads advice lines from stdin and injects them into the kernel scheduler.
-// Expected format from host/agent:  ADVICE:PID=<number>\n
+// Small helper that reads LLM scheduling advice from stdin and
+// injects it into the kernel via set_llm_advice(pid).
+//
+// In the intended design, init routes only advice lines into
+// llmhelper's stdin via a dedicated pipe, *not* the interactive
+// console. Each line is expected to have the form:
+//
+//   ADVICE:PID=<n> TS=<ts> V=1
+//
+// Only the PID field matters; everything else is ignored.
 
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "user/user.h"
 
-#define TOK "ADVICE:PID="
+#define BUF_SZ 512
 
-static int
-is_digit(char c)
-{
-  return c >= '0' && c <= '9';
-}
-
-static int
-startswith(const char *s, const char *pfx)
-{
-  while(*pfx) {
-    if(*s != *pfx) return 0;
-    s++; pfx++;
-  }
-  return 1;
-}
-
-// Scan a buffer for one or more "ADVICE:PID=<n>" tokens.
-// For each token found, call set_llm_advice(<n>).
+// Parse a single line. If it matches ADVICE:PID=<n>..., call set_llm_advice(n).
 static void
-process_advice_line(const char *line)
+handle_line(char *line)
 {
-  for (int i = 0; line[i]; i++) {
-    if (line[i] == 'A' && startswith(&line[i], TOK)) {
-      const char *p = &line[i] + sizeof(TOK) - 1;
-      int pid = 0, have = 0;
+  // Strip leading spaces.
+  while(*line == ' ' || *line == '\t')
+    line++;
 
-      while (is_digit(*p)) {
-        pid = pid * 10 + (*p - '0');
-        p++;
-        have = 1;
-      }
+  const char *prefix = "ADVICE:PID=";
+  int plen = 11; // strlen("ADVICE:PID=")
+  int i;
 
-      if (have) {
-        if (set_llm_advice(pid) == 0)
-          printf("[llmhelper] Injected PID %d\n", pid);
-        else
-          printf("[llmhelper] Failed to inject PID %d\n", pid);
-      }
-    }
+  // Require the exact prefix.
+  for(i = 0; i < plen; i++) {
+    if(line[i] != prefix[i])
+      return;
+  }
+
+  char *p = line + plen;
+
+  // PID must start with a digit.
+  if(*p < '0' || *p > '9')
+    return;
+
+  int pid = 0;
+  while(*p >= '0' && *p <= '9') {
+    pid = pid * 10 + (*p - '0');
+    p++;
+  }
+
+  if(pid <= 0)
+    return;
+
+  // Best-effort: ignore errors, but print a hint on failure.
+  if(set_llm_advice(pid) < 0) {
+    printf("llmhelper: set_llm_advice(%d) failed\n", pid);
+  } else {
+    // Lightweight debug so we can see when advice is applied.
+    printf("llmhelper: applied advice for pid %d\n", pid);
   }
 }
 
 int
 main(int argc, char *argv[])
 {
-  // Simple line buffer; the agent writes newline-terminated advice.
-  char buf[256];
-  int  n = 0;
+  char buf[BUF_SZ];
+  int n;
+  int start = 0; // start index of unprocessed data in buf
+  int end   = 0; // one past last valid byte in buf
 
-  printf("[llmhelper] Ready. Waiting for advice on stdin...\n");
+  printf("llmhelper: started, waiting for LLM advice on stdin...\n");
 
-  for (;;) {
-    int r = read(0, buf + n, sizeof(buf) - 1 - n);
-    if (r > 0) {
-      int end = n + r;
+  for(;;) {
+    // If buffer is full and no newline, drop it to avoid deadlock.
+    if(end >= BUF_SZ - 1 && start == 0) {
+      // Not ideal, but advice is periodic, so dropping a bad chunk is ok.
+      end = 0;
+    }
+
+    n = read(0, buf + end, BUF_SZ - 1 - end);
+    if(n <= 0)
+      break; // EOF or error; just exit.
+
+    end += n;
+    buf[end] = 0; // keep it null-terminated for safety
+
+    // Scan for complete lines.
+    int i = start;
+    while(i < end) {
+      if(buf[i] == '\n') {
+        buf[i] = 0;          // terminate this line
+        handle_line(&buf[start]);
+        start = i + 1;       // next line starts after '\0'
+      }
+      i++;
+    }
+
+    // Compact buffer if there is leftover partial line.
+    if(start == end) {
+      // All data consumed.
+      start = 0;
+      end = 0;
+    } else if(start > 0) {
+      // Move partial line to the beginning.
+      int remaining = end - start;
+      memmove(buf, buf + start, remaining);
+      start = 0;
+      end = remaining;
       buf[end] = 0;
-
-      // Process complete lines.
-      int start = 0;
-      for (int i = n; i < end; i++) {
-        if (buf[i] == '\n') {
-          buf[i] = 0;                  // terminate this line
-          process_advice_line(&buf[start]);
-          start = i + 1;               // next segment
-        }
-      }
-
-      // Move any partial tail to the front.
-      if (start < end) {
-        int tail = end - start;
-        memmove(buf, &buf[start], tail);
-        n = tail;
-      } else {
-        n = 0;
-      }
-
-      // If buffer is close to full without newline, process to avoid stall.
-      if (n >= (int)sizeof(buf) - 8) {
-        buf[n] = 0;
-        process_advice_line(buf);
-        n = 0;
-      }
-    } else {
-      // No input right now; yield briefly.
-      pause(10);
     }
   }
+
+  printf("llmhelper: exiting (input closed)\n");
+  exit(0);
 }

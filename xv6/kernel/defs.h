@@ -40,7 +40,7 @@ int             dirlink(struct inode*, char*, uint);
 struct inode*   dirlookup(struct inode*, char*, uint*);
 struct inode*   ialloc(uint, short);
 struct inode*   idup(struct inode*);
-void            iinit();
+void            iinit(void);
 void            ilock(struct inode*);
 void            iput(struct inode*);
 void            iunlock(struct inode*);
@@ -89,7 +89,7 @@ int             kkill(int);
 int             killed(struct proc*);
 void            setkilled(struct proc*);
 struct cpu*     mycpu(void);
-struct proc*    myproc();
+struct proc*    myproc(void);
 void            procinit(void);
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
@@ -101,6 +101,12 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+
+// LLM-advised scheduling helpers (implemented in proc.c).
+// Called from the timer trap to update per-process statistics
+// and to emit SCHED_LOG_* snapshots for the external agent.
+void            update_sched_stats(void);
+void            log_scheduling_state(void);
 
 // swtch.S
 void            swtch(struct context*, struct context*);
@@ -134,7 +140,7 @@ int             argstr(int, char*, int);
 void            argaddr(int, uint64 *);
 int             fetchstr(uint64, char*, int);
 int             fetchaddr(uint64, uint64*);
-void            syscall();
+void            syscall(void);
 
 // trap.c
 extern uint     ticks;

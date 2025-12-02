@@ -85,11 +85,10 @@ endif
 LDFLAGS = -z max-page-size=4096
 
 $K/kernel: $(OBJS) $K/kernel.ld
-	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS)
+	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) 
 	$(OBJDUMP) -S $K/kernel > $K/kernel.asm
 	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $K/kernel.sym
 
-# Ensure assembly files build with the right flags
 $K/%.o: $K/%.S
 	$(CC) -march=rv64gc -g -c -o $@ $<
 
@@ -118,9 +117,13 @@ $U/_forktest: $U/forktest.o $(ULIB)
 mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
 	gcc -Wno-unknown-attributes -I. -o mkfs/mkfs mkfs/mkfs.c
 
-# Prevent deletion of intermediate files so fs.img contents persist between builds.
+# Prevent deletion of intermediate files, e.g. cat.o, after first build, so
+# that disk image changes after first build are persistent until clean.  More
+# details:
+# http://www.gnu.org/software/make/manual/html_node/Chained-Rules.html
 .PRECIOUS: %.o
 
+# User programs that will be built into the xv6 file system image.
 UPROGS=\
 	$U/_cat\
 	$U/_echo\
@@ -142,23 +145,22 @@ UPROGS=\
 	$U/_forphan\
 	$U/_dorphan\
 	$U/_llmhelper\
+	$U/_cpubound\
+	$U/_iobound\
+	$U/_mixed\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
 
 -include kernel/*.d user/*.d
 
-clean:
+clean: 
 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
 	*/*.o */*.d */*.asm */*.sym \
 	$K/kernel fs.img \
 	mkfs/mkfs .gdbinit \
 	$U/usys.S \
 	$(UPROGS)
-
-# Convenience alias so "make kernel" builds the ELF despite the kernel/ dir
-.PHONY: kernel
-kernel: $K/kernel
 
 # try to generate a unique GDB port
 GDBPORT = $(shell expr `id -u` % 5000 + 25000)
@@ -170,19 +172,31 @@ ifndef CPUS
 CPUS := 3
 endif
 
+# Base QEMU options for running xv6 on RISC-V.
 QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -global virtio-mmio.force-legacy=false
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 
-# === LLM Scheduler Integration ===
-# Direct QEMU serial channels to shared log/advice files for the agent bridge.
-# (These paths are relative to the project root, not xv6/)
-# QEMUOPTS += -serial file:../shared/sched_log.txt
-# QEMUOPTS += -serial file:../shared/llm_advice.txt
+# Shared directory used by host-side tools (Python agent, analysis scripts).
+# The agent_bridge.py process expects to find:
+#   shared/sched_log.txt   - scheduler snapshots (console output)
+#   shared/llm_advice.txt  - advice written by the agent
+SHARED_DIR := ../shared
 
+# Standard QEMU run: interactive xv6, no logging redirection.
 qemu: check-qemu-version $K/kernel fs.img
 	$(QEMU) $(QEMUOPTS)
+
+# Run xv6 and tee console output to shared/sched_log.txt so the Python agent
+# can consume SCHED_LOG blocks in real time.
+qemu-log: check-qemu-version $K/kernel fs.img
+	mkdir -p $(SHARED_DIR)
+	$(QEMU) $(QEMUOPTS) 2>&1 | tee $(SHARED_DIR)/sched_log.txt
+
+# Run xv6 in no-GUI mode; alias kept for compatibility with older lab docs.
+# This uses qemu-log so the Python agent still sees scheduler logs.
+qemu-nox: qemu-log
 
 .gdbinit: .gdbinit.tmpl-riscv
 	sed "s/:1234/:$(GDBPORT)/" < $^ > $@

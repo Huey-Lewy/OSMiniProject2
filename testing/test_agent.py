@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# testing/test_agent.py
 # Simple tester for the LLM Scheduler Agent.
 # Runs local tests for log parsing, prompt formatting, and LLM connectivity.
 
@@ -6,20 +7,22 @@ import os
 import re
 import time
 import tempfile
-from agent_bridge import LLMSchedulerAgent, ProcessStats
-
+from agent.agent_bridge import LLMSchedulerAgent, ProcessStats  # <-- updated import
 
 #### Sample Log Generator ####
 def _write_sample_log(path: str):
     """
-    Create a fake scheduler log for testing.
+    Write a small synthetic scheduler log for testing.
+
+    The block includes PIDs 1–4, where only PIDs 3 and 4 are relevant to the
+    agent (RUNNABLE and pid > 2).
     """
     sample_log = """SCHED_LOG_START
 TIMESTAMP:100
 PROC:1,3,50,10,5,30
 PROC:2,3,25,15,8,12
-PROC:3,2,5,20,12,2
-PROC:4,2,8,30,20,5
+PROC:3,3,5,20,12,2
+PROC:4,3,8,30,20,5
 SCHED_LOG_END
 """
     with open(path, "w", encoding="utf-8") as f:
@@ -30,17 +33,25 @@ SCHED_LOG_END
 #### Helpers ####
 def _extract_pids_from_prompt(prompt: str) -> set[int]:
     """
-    Return the set of PIDs mentioned in a prompt produced by the agent.
-    Supports both legacy 'Process 3:' and new 'PID=3' / 'PID: 3' formats.
+    Extract all PIDs referenced in an LLM prompt.
+
+    Supports 'PID=3', 'PID: 3', and legacy 'Process 3:' formats.
     """
     ids = set(int(x) for x in re.findall(r"\bPID\s*[=:]\s*(\d+)", prompt))
     ids |= set(int(x) for x in re.findall(r"\bProcess\s+(\d+)\s*:", prompt))
     return ids
 
 
-#### Parser Test ####
+#### Parser / Timestamp Test ####
 def test_log_parsing(agent: LLMSchedulerAgent) -> bool:
-    """Test that the agent reads and parses process entries correctly."""
+    """
+    Verify that the agent reads a scheduler log block and parses processes.
+
+    Checks:
+      - A test log with TS=100 is parsed successfully.
+      - The returned timestamp matches 100.
+      - The process list is populated and printed for inspection.
+    """
     print("==== Test: Log Parsing ====")
     with tempfile.TemporaryDirectory() as td:
         fake_log = os.path.join(td, "test_sched_log.txt")
@@ -50,12 +61,17 @@ def test_log_parsing(agent: LLMSchedulerAgent) -> bool:
         agent.log_file = fake_log
         agent.last_log_size = 0  # property backed by agent.last_size
 
-        processes = agent.read_scheduling_log()  # public API
-        if not processes:
-            print("[x] Failed to parse scheduler log (no processes returned).")
+        parsed = agent.read_scheduling_log()  # public API -> (ts, processes)
+        if not parsed:
+            print("[x] Failed to parse scheduler log (no block returned).")
             return False
 
-        print(f"[✓] Parsed {len(processes)} processes:")
+        ts, processes = parsed
+        if ts != 100:
+            print(f"[x] Unexpected timestamp {ts}, expected 100.")
+            return False
+
+        print(f"[✓] Parsed TS={ts} with {len(processes)} processes:")
         for p in processes:
             print(
                 f"  [proc] PID={p.pid} STATE={p.state} "
@@ -67,12 +83,18 @@ def test_log_parsing(agent: LLMSchedulerAgent) -> bool:
 
 #### Prompt Builder Test ####
 def test_prompt(agent: LLMSchedulerAgent) -> bool:
-    """Test that the scheduling prompt is formatted correctly."""
+    """
+    Verify that the scheduling prompt is formatted correctly.
+
+    Ensures:
+      - Only RUNNABLE processes with pid > 2 appear in the prompt.
+      - The expected PIDs {3, 4} are present, and PID 2 is excluded.
+    """
     print("==== Test: Prompt Generation ====")
     sample_data = [
-        ProcessStats(pid=3, state=2, cpu_ticks=5,  wait_ticks=20, io_count=12, recent_cpu=2),  # RUNNABLE
-        ProcessStats(pid=4, state=2, cpu_ticks=8,  wait_ticks=30, io_count=20, recent_cpu=5),  # RUNNABLE
-        ProcessStats(pid=2, state=3, cpu_ticks=25, wait_ticks=15, io_count=8,  recent_cpu=12), # NOT RUNNABLE
+        ProcessStats(pid=3, state=3, cpu_ticks=5,  wait_ticks=20, io_count=12, recent_cpu=2),   # RUNNABLE
+        ProcessStats(pid=4, state=3, cpu_ticks=8,  wait_ticks=30, io_count=20, recent_cpu=5),   # RUNNABLE
+        ProcessStats(pid=2, state=2, cpu_ticks=25, wait_ticks=15, io_count=8,  recent_cpu=12),  # NOT RUNNABLE
     ]
     prompt = agent.format_prompt_for_llm(sample_data)  # public API
     if not prompt:
@@ -83,11 +105,14 @@ def test_prompt(agent: LLMSchedulerAgent) -> bool:
     print(prompt)
     print("[log] End of prompt.\n")
 
-    # Only RUNNABLE (state==2) PIDs should appear.
+    # Only RUNNABLE (state==3) and pid>2 should appear → {3,4}
     pids_in_prompt = _extract_pids_from_prompt(prompt)
     ok = (3 in pids_in_prompt) and (4 in pids_in_prompt) and (2 not in pids_in_prompt)
     if not ok:
-        print(f"[x] Unexpected PIDs in prompt. Found: {sorted(pids_in_prompt)}; expected to include 3,4 and exclude 2.")
+        print(
+            f"[x] Unexpected PIDs in prompt. "
+            f"Found: {sorted(pids_in_prompt)}; expected to include 3,4 and exclude 2."
+        )
     else:
         print("[✓] Prompt includes only RUNNABLE PIDs and expected fields.\n")
     return ok
@@ -96,8 +121,12 @@ def test_prompt(agent: LLMSchedulerAgent) -> bool:
 #### Connectivity Test ####
 def test_llm_connection(agent: LLMSchedulerAgent) -> bool:
     """
-    Connectivity & parsing test against Ollama.
-    Set SKIP_OLLAMA_TEST=1 to skip this test.
+    Exercise Ollama connectivity and PID parsing from the LLM response.
+
+    Behavior:
+      - Sends simple prompts that instruct the model to echo specific PIDs.
+      - Compares the parsed PID to the expected one.
+      - Set SKIP_OLLAMA_TEST=1 to skip this test when the model is unavailable.
     """
     if os.getenv("SKIP_OLLAMA_TEST") == "1":
         print("==== Test: Ollama Connectivity — SKIPPED (SKIP_OLLAMA_TEST=1) ====\n")
@@ -137,8 +166,16 @@ def test_llm_connection(agent: LLMSchedulerAgent) -> bool:
 
 #### Run All Tests ####
 def main():
+    """
+    Run the LLM scheduler agent test suite.
+
+    Tests:
+      - Scheduler log parsing.
+      - Prompt generation for runnable processes.
+      - Ollama connectivity and response parsing (optional).
+    """
     print("====== LLM Agent Test Suite ======\n")
-    agent = LLMSchedulerAgent()  # uses your defaults (Ollama URL/model, shared paths)
+    agent = LLMSchedulerAgent()  # uses your configured model, base URL, and shared paths
 
     tests = [
         test_log_parsing,
