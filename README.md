@@ -13,38 +13,44 @@ The high-level idea:
 
 ```text
 ├── agent/
-│   ├── agent_bridge.py      # Reads scheduler logs, queries Ollama, writes ADVICE lines
-│   ├── analyze_results.py   # Offline analysis: parses shared/sched_log.txt and plots CPU/wait/IO
-│   ├── test_agent.py        # Unit-style tests: log parsing, prompt generation, LLM connectivity
-│   ├── test_xv6.py          # Sends synthetic SCHED_LOG blocks → checks agent PID choices
-│   └── test_scheduling.py   # Full simulated scheduler that uses agent advice end-to-end
+│   ├── agent_bridge.py       # Reads scheduler logs, queries Ollama, writes ADVICE lines
+│   ├── console_mux.py        # Muxes user stdin + ADVICE FIFO into a single stream for QEMU
+│   ├── sched_log_splitter.py # Splits QEMU stdout into human console vs shared/sched_log.txt
+│   ├── analyze_results.py    # Offline analysis: parses shared/sched_log.txt and plots CPU/wait/IO
+│   └── __init__.py?          # (optional, only if you treat agent/ as a Python package)
+│
+├── .testing/
+│   ├── test_agent.py         # Unit-style tests: log parsing, prompt generation, LLM connectivity
+│   ├── test_xv6.py           # Feeds synthetic SCHED_LOG blocks → checks agent PID choices
+│   └── test_scheduling.py    # Simulated scheduler loop that uses agent advice end-to-end
 │
 ├── shared/
-│   ├── sched_log.txt        # Scheduler snapshots (produced by the modified xv6 kernel)
-│   └── llm_advice.txt       # Advice lines (written by agent_bridge.py, consumed by xv6)
+│   ├── sched_log.txt         # Scheduler snapshots (appended by sched_log_splitter.py)
+│   ├── llm_advice.txt        # Advice history (written by agent_bridge.py, tailed for analysis)
+│   └── llm_advice.fifo       # Named pipe (created at runtime) for live ADVICE → console_mux → xv6
 │
 ├── xv6/
-│   ├── Makefile             # Adds llmhelper + test workloads to UPROGS
+│   ├── Makefile              # Adds llmhelper + test workloads (cpubound/iobound/mixed) to UPROGS
 │   ├── kernel/
-│   │   ├── defs.h           # Prototypes for scheduling-stat helpers + set_llm_advice
-│   │   ├── proc.h           # Extended struct proc: cpu_ticks, wait_ticks, io_count, recent_cpu
-│   │   ├── proc.c           # Tick accounting, state logging, scheduler uses LLM advice
-│   │   ├── sysproc.c        # sys_set_llm_advice, increments io_count via sys_sleep
-│   │   ├── syscall.c        # Adds SYS_set_llm_advice to syscall dispatch table
-│   │   ├── syscall.h        # Defines syscall number
-│   │   ├── trap.c           # Tick-based stat updates + SCHED_LOG interval triggers
-│   │   └── ... (others unchanged)
+│   │   ├── defs.h            # Prototypes for scheduling-stat helpers + set_llm_advice()
+│   │   ├── proc.h            # Extended struct proc: cpu_ticks, wait_ticks, io_count, recent_cpu
+│   │   ├── proc.c            # Tick accounting, state logging, scheduler consults LLM advice
+│   │   ├── sysproc.c         # sys_set_llm_advice, pause()/sleep() hooks for io_count
+│   │   ├── syscall.c         # Adds SYS_set_llm_advice to syscall dispatch table
+│   │   ├── syscall.h         # Defines syscall number for set_llm_advice
+│   │   ├── trap.c            # Tick-based stat updates + SCHED_LOG interval triggers
+│   │   └── ...               # Other xv6 kernel files unchanged
 │   └── user/
-│       ├── llmhelper.c      # Reads ADVICE:PID=X from stdin, calls set_llm_advice()
-│       ├── cpubound.c       # CPU-heavy workload
-│       ├── iobound.c        # IO-heavy workload
-│       ├── mixed.c          # Mixed CPU/IO workload
-│       ├── init.c           # Spawns llmhelper at boot
-│       ├── user.h           # Declares set_llm_advice()
-│       ├── usys.pl          # Generates user stub for set_llm_advice()
-│       └── ... (others unchanged)
+│       ├── llmhelper.c       # Reads ADVICE:PID=<n> from stdin, calls set_llm_advice(n)
+│       ├── cpubound.c        # CPU-heavy workload (supports multiple worker processes)
+│       ├── iobound.c         # I/O-heavy workload (pause()+prints, supports multiple workers)
+│       ├── mixed.c           # Mixed CPU/IO workload (CPU bursts + pause(), multi-worker)
+│       ├── init.c            # Spawns llmhelper at boot and wires its stdin to ADVICE pipe
+│       ├── user.h            # Declares set_llm_advice() and pause() prototypes
+│       ├── usys.pl           # Generates user-space syscall stubs, including set_llm_advice
+│       └── ...               # Other xv6 user programs unchanged
 │
-├── requirements.txt
+├── requirements.txt          # Python dependencies for agent, analysis, and tests
 ├── LICENSE
 └── README.md
 ```
